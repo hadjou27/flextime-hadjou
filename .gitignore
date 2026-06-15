@@ -8,6 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+venv/
 _docs
 db.sqlite3
 00*.py
+
+# Secrets / local config
+.env

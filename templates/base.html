@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}FlexTime{% endblock %}</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+</head>
+<body>
+  <nav class="container">
+    <ul>
+      <li><strong><a href="{% url 'core:my_calendar' %}">FlexTime</a></strong></li>
+    </ul>
+    <ul>
+      {% if user.is_authenticated %}
+        <li>{{ user.get_full_name }}</li>
+        <li>
+          <form action="{% url 'accounts:sign_out' %}" method="post" style="margin:0">
+            {% csrf_token %}
+            <button type="submit" class="secondary outline">Sign out</button>
+          </form>
+        </li>
+      {% else %}
+        <li><a href="{% url 'accounts:sign_in' %}" role="button">Sign in</a></li>
+      {% endif %}
+    </ul>
+  </nav>
+
+  <main class="container">
+    {% if messages %}
+      {% for message in messages %}
+        <article class="{{ message.tags }}">{{ message }}</article>
+      {% endfor %}
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

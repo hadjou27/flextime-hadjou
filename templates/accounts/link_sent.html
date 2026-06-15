@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+
+{% block title %}Check your email — FlexTime{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>Check your email 📧</h1>
+    <p>
+      We've sent a sign-in link{% if email %} to <strong>{{ email }}</strong>{% endif %}.
+      Open it to finish signing in — it expires in a few minutes.
+    </p>
+  </hgroup>
+  <p><a href="{% url 'accounts:sign_in' %}">Didn't get it? Try again.</a></p>
+{% endblock %}

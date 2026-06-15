@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}Sign in — FlexTime{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>Sign in to FlexTime</h1>
+    <p>Enter your email and we'll send you a sign-in link. No password needed.</p>
+  </hgroup>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <article class="error">{{ form.non_field_errors }}</article>
+    {% endif %}
+
+    <label>
+      Email
+      {{ form.email }}
+      {% for error in form.email.errors %}<small style="color:var(--pico-del-color)">{{ error }}</small>{% endfor %}
+    </label>
+
+    <fieldset>
+      <small>New here? Add your name (returning users can leave these blank).</small>
+      <div class="grid">
+        <label>{{ form.first_name }}</label>
+        <label>{{ form.last_name }}</label>
+      </div>
+    </fieldset>
+
+    <button type="submit">Send me a sign-in link</button>
+  </form>
+{% endblock %}

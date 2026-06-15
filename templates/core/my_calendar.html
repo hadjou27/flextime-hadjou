@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}My Calendar — FlexTime{% endblock %}
+
+{% block content %}
+  <h1>My Calendar</h1>
+  <p>Welcome back, {{ user.first_name }}. Your availability slots will live here.</p>
+
+  <article>
+    <header><strong>Your shareable calendar link</strong></header>
+    <p>Send this to friends so they can see when you're free:</p>
+    <pre>{{ request.scheme }}://{{ request.get_host }}/calendar/{{ user.share_slug }}</pre>
+    <small>Only people with this link can open your calendar.</small>
+  </article>
+{% endblock %}
