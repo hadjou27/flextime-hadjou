@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+
+{% block title %}{{ creator.get_full_name }} — FlexTime{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>{{ creator.get_full_name }}'s calendar</h1>
+    {% if is_owner %}
+      <p>This is your own calendar, as your friends see it.</p>
+    {% else %}
+      <p>You now have access to this calendar. It shows up in your
+         <a href="{% url 'core:my_calendar' %}">Other Calendars</a>.</p>
+    {% endif %}
+  </hgroup>
+
+  <p>Availability slots and activities will appear here.</p>
+{% endblock %}

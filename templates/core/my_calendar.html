@@ -9,7 +9,73 @@
   <article>
     <header><strong>Your shareable calendar link</strong></header>
     <p>Send this to friends so they can see when you're free:</p>
-    <pre>{{ request.scheme }}://{{ request.get_host }}/calendar/{{ user.share_slug }}</pre>
+    <pre>{{ request.scheme }}://{{ request.get_host }}{% url 'core:shared_calendar' user.share_slug %}</pre>
     <small>Only people with this link can open your calendar.</small>
   </article>
+
+  <h2>Other Calendars</h2>
+  {% if accessible %}
+    <ul>
+      {% for access in accessible %}
+        <li>
+          <a href="{% url 'core:shared_calendar' access.creator.share_slug %}">
+            {{ access.creator.get_full_name }}
+          </a>
+          <form action="{% url 'core:archive_calendar' access.creator.share_slug %}"
+                method="post" style="display:inline; margin:0">
+            {% csrf_token %}
+            <button type="submit" class="secondary outline">Archive</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>You haven't opened anyone's calendar yet. When a friend shares their link
+       and you open it, their calendar will appear here.</p>
+  {% endif %}
+
+  {% if archived %}
+    <details>
+      <summary>Archived calendars ({{ archived|length }})</summary>
+      <ul>
+        {% for access in archived %}
+          <li>
+            {{ access.creator.get_full_name }}
+            <form action="{% url 'core:unarchive_calendar' access.creator.share_slug %}"
+                  method="post" style="display:inline; margin:0">
+              {% csrf_token %}
+              <button type="submit" class="secondary outline">Restore</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% endif %}
+
+  <h2>Your visitors</h2>
+  {% if visitors %}
+    <ul>
+      {% for access in visitors %}
+        <li>
+          {{ access.visitor.get_full_name }}
+          {% if access.blocked_by_creator %}
+            <span data-tooltip="Blocked — they no longer see new slots">🚫 blocked</span>
+            <form action="{% url 'core:unblock_visitor' access.visitor.id %}"
+                  method="post" style="display:inline; margin:0">
+              {% csrf_token %}
+              <button type="submit" class="secondary outline">Unblock</button>
+            </form>
+          {% else %}
+            <form action="{% url 'core:block_visitor' access.visitor.id %}"
+                  method="post" style="display:inline; margin:0">
+              {% csrf_token %}
+              <button type="submit" class="contrast outline">Block</button>
+            </form>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>No one has opened your calendar yet.</p>
+  {% endif %}
 {% endblock %}

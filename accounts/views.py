@@ -6,6 +6,7 @@ from django.core.mail import send_mail
 from django.shortcuts import redirect, render
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from .forms import SignInForm
@@ -35,10 +36,22 @@ def _send_magic_link(request, user):
     )
 
 
+def _safe_next(request, url):
+    """Return ``url`` if it's a safe local redirect, else None."""
+    if url and url_has_allowed_host_and_scheme(url, allowed_hosts={request.get_host()}):
+        return url
+    return None
+
+
 def sign_in(request):
     """Show the sign-in/sign-up form and email a magic link on submit."""
     if request.user.is_authenticated:
         return redirect(settings.LOGIN_REDIRECT_URL)
+
+    # Where to land after sign-in (e.g. a shared calendar link the visitor
+    # clicked while logged out). Carried through the email round-trip via the
+    # session, since the magic link itself doesn't know about it.
+    next_url = _safe_next(request, request.GET.get('next') or request.POST.get('next'))
 
     if request.method == 'POST':
         form = SignInForm(request.POST)
@@ -46,11 +59,12 @@ def sign_in(request):
             user = form.get_or_create_user()
             _send_magic_link(request, user)
             request.session['link_sent_to'] = user.email
+            request.session['post_login_redirect'] = next_url
             return redirect('accounts:link_sent')
     else:
         form = SignInForm()
 
-    return render(request, 'accounts/sign_in.html', {'form': form})
+    return render(request, 'accounts/sign_in.html', {'form': form, 'next': next_url})
 
 
 def link_sent(request):
@@ -77,7 +91,9 @@ def verify(request, token):
 
     login(request, user, backend=AUTH_BACKEND)
     messages.success(request, f'Welcome, {user.get_short_name()}!')
-    return redirect(settings.LOGIN_REDIRECT_URL)
+
+    next_url = _safe_next(request, request.session.pop('post_login_redirect', None))
+    return redirect(next_url or settings.LOGIN_REDIRECT_URL)
 
 
 @require_POST
