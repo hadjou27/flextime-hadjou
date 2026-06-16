@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import CalendarAccess
+from .models import ActivitySuggestion, AvailabilitySlot, CalendarAccess
 
 
 @admin.register(CalendarAccess)
@@ -15,3 +15,18 @@ class CalendarAccessAdmin(admin.ModelAdmin):
         'visitor__email', 'visitor__first_name', 'visitor__last_name',
     )
     readonly_fields = ('first_accessed_at', 'blocked_at', 'archived_at')
+
+
+@admin.register(AvailabilitySlot)
+class AvailabilitySlotAdmin(admin.ModelAdmin):
+    list_display = ('owner', 'start', 'end', 'status')
+    list_filter = ('status',)
+    search_fields = ('owner__email', 'owner__first_name', 'owner__last_name')
+    date_hierarchy = 'start'
+
+
+@admin.register(ActivitySuggestion)
+class ActivitySuggestionAdmin(admin.ModelAdmin):
+    list_display = ('title', 'category', 'slot', 'status', 'max_participants')
+    list_filter = ('status', 'category')
+    search_fields = ('title', 'description')

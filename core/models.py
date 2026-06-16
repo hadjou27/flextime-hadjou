@@ -1,6 +1,44 @@
+from datetime import timedelta
+
 from django.conf import settings
-from django.db import models
+from django.core.exceptions import ValidationError
+from django.db import models, transaction
 from django.utils import timezone
+
+# Calendar views show only the last 7 days plus all future dates.
+VISIBLE_WINDOW = timedelta(days=7)
+
+
+class Status(models.TextChoices):
+    """Four-state vocabulary shared by slots and activities."""
+    OPEN = 'open', 'Open'
+    CONFIRMED = 'confirmed', 'Confirmed'
+    CLOSED = 'closed', 'Closed'
+    CANCELLED = 'cancelled', 'Cancelled'
+
+
+class Category(models.TextChoices):
+    """Predefined list of activity categories (per the brief)."""
+    TENNIS = 'tennis', 'Tennis'
+    RUNNING = 'running', 'Running'
+    HIKING = 'hiking', 'Hiking'
+    CYCLING = 'cycling', 'Cycling'
+    SWIMMING = 'swimming', 'Swimming'
+    FOOTBALL = 'football', 'Football'
+    BASKETBALL = 'basketball', 'Basketball'
+    YOGA = 'yoga', 'Yoga'
+    FITNESS = 'fitness', 'Fitness'
+    BOARD_GAMES = 'board_games', 'Board Games'
+    VIDEO_GAMES = 'video_games', 'Video Games'
+    CINEMA = 'cinema', 'Cinema'
+    MUSEUM = 'museum', 'Museum'
+    RESTAURANT = 'restaurant', 'Restaurant'
+    COFFEE = 'coffee', 'Coffee'
+    DRINKS = 'drinks', 'Drinks'
+    LANGUAGE_EXCHANGE = 'language_exchange', 'Language Exchange'
+    NETWORKING = 'networking', 'Networking'
+    VOLUNTEERING = 'volunteering', 'Volunteering'
+    OTHER = 'other', 'Other'
 
 
 class CalendarAccess(models.Model):
@@ -60,3 +98,180 @@ class CalendarAccess(models.Model):
         self.archived_by_visitor = archived
         self.archived_at = timezone.now() if archived else None
         self.save(update_fields=['archived_by_visitor', 'archived_at'])
+
+
+class SlotQuerySet(models.QuerySet):
+    def recent_and_upcoming(self):
+        """Only the last 7 days plus all future slots (per the brief)."""
+        return self.filter(start__gte=timezone.now() - VISIBLE_WINDOW)
+
+
+class AvailabilitySlot(models.Model):
+    """A period of time during which the owner is available.
+
+    A slot is only a container of time plus a status — it carries no category,
+    title, description, or interest of its own. Those belong to its activity
+    suggestions. A slot holds one or more activities.
+    """
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='slots',
+    )
+    start = models.DateTimeField()
+    end = models.DateTimeField()
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.OPEN,
+    )
+
+    objects = SlotQuerySet.as_manager()
+
+    class Meta:
+        ordering = ['start']
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(end__gt=models.F('start')),
+                name='slot_end_after_start',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.owner.get_short_name()}: {self.start:%Y-%m-%d %H:%M}–{self.end:%H:%M}'
+
+    def clean(self):
+        if self.start and self.end and self.end <= self.start:
+            raise ValidationError({'end': 'End time must be after the start time.'})
+
+    @transaction.atomic
+    def cancel(self):
+        """Cancel the slot and, as a side effect, all of its activities.
+
+        Both writes happen in one transaction, so the slot and its activities
+        can never end up in inconsistent states.
+        """
+        self.status = Status.CANCELLED
+        self.save(update_fields=['status'])
+        self.activities.update(status=Status.CANCELLED)
+
+
+class ActivitySuggestion(models.Model):
+    """A possible activity during a slot.
+
+    Holds all the semantic content (category, title, description) and is the
+    thing users express interest in. A slot may hold several of these, but only
+    one may be Confirmed at a time.
+    """
+
+    slot = models.ForeignKey(
+        AvailabilitySlot,
+        on_delete=models.CASCADE,
+        related_name='activities',
+    )
+    category = models.CharField(max_length=20, choices=Category.choices)
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.OPEN,
+    )
+    # Optional cap on interested participants. Blank/None means no limit.
+    max_participants = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['id']
+        constraints = [
+            # Only one activity per slot may be Confirmed at a time.
+            models.UniqueConstraint(
+                fields=['slot'],
+                condition=models.Q(status='confirmed'),
+                name='one_confirmed_activity_per_slot',
+            ),
+            # Capacity, if set, must be at least 1 (0 would make no sense).
+            models.CheckConstraint(
+                condition=models.Q(max_participants__isnull=True) | models.Q(max_participants__gte=1),
+                name='activity_capacity_at_least_one',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.title} ({self.get_status_display()})'
+
+    @transaction.atomic
+    def confirm(self):
+        """Confirm this activity for its slot.
+
+        Side effects (per the brief): the parent slot becomes Confirmed, and
+        every other activity in the slot becomes Cancelled.
+
+        We lock the parent slot row for the duration of the transaction
+        (``select_for_update``) so two people can't confirm two different
+        activities of the same slot at the same time — the second one waits for
+        the first to commit, keeping "only one confirmed per slot" true even
+        under concurrency.
+        """
+        slot = AvailabilitySlot.objects.select_for_update().get(pk=self.slot_id)
+        if slot.status in (Status.CANCELLED, Status.CLOSED):
+            raise ValidationError('Cannot confirm an activity on a closed or cancelled slot.')
+
+        # Cancel the competitors first, so we never momentarily have two
+        # confirmed activities (which the unique constraint would reject).
+        slot.activities.exclude(pk=self.pk).update(status=Status.CANCELLED)
+
+        self.status = Status.CONFIRMED
+        self.save(update_fields=['status'])
+
+        slot.status = Status.CONFIRMED
+        slot.save(update_fields=['status'])
+        self.slot = slot
+
+    @transaction.atomic
+    def close(self):
+        """Close the confirmed activity; the parent slot becomes Closed.
+
+        The owner can never close a slot directly — a slot only becomes Closed
+        as a side effect of its confirmed activity being closed.
+        """
+        if self.status != Status.CONFIRMED:
+            raise ValidationError('Only the confirmed activity can be closed.')
+
+        slot = AvailabilitySlot.objects.select_for_update().get(pk=self.slot_id)
+        self.status = Status.CLOSED
+        self.save(update_fields=['status'])
+
+        slot.status = Status.CLOSED
+        slot.save(update_fields=['status'])
+        self.slot = slot
+
+    @transaction.atomic
+    def reopen(self):
+        """Reopen a closed activity so people can join again.
+
+        The exact inverse of close(): the activity goes Closed → Confirmed and
+        its slot goes Closed → Confirmed. The brief implies this: a closed
+        activity's access can be restored "unless the owner reopens it".
+        """
+        if self.status != Status.CLOSED:
+            raise ValidationError('Only a closed activity can be reopened.')
+
+        slot = AvailabilitySlot.objects.select_for_update().get(pk=self.slot_id)
+        self.status = Status.CONFIRMED
+        self.save(update_fields=['status'])
+
+        slot.status = Status.CONFIRMED
+        slot.save(update_fields=['status'])
+        self.slot = slot
+
+    def cancel(self):
+        """Cancel this single activity, without touching its siblings.
+
+        Cancelling the *confirmed* activity is refused: that would leave the
+        slot Confirmed with no confirmed activity. Since 'Cancelled' is a
+        terminal state in the brief, undoing a confirmation must go through
+        cancelling the whole slot instead.
+        """
+        if self.status == Status.CONFIRMED:
+            raise ValidationError(
+                'Cannot cancel the confirmed activity directly — cancel the slot instead.'
+            )
+        self.status = Status.CANCELLED
+        self.save(update_fields=['status'])

@@ -152,6 +152,55 @@ and its timestamp are in place.
 
 ---
 
+## Slots & activities: the state machine
+
+Slots and activities share four states (Open, Confirmed, Closed, Cancelled),
+and confirming or closing one thing automatically updates the others. I keep all
+of this logic **in the models** (as `confirm()`, `close()`, `reopen()`,
+`cancel()` methods), so views just call a method and the rules live in one
+place.
+
+The automatic transitions, straight from the brief:
+
+- **Confirm an activity** → its slot becomes Confirmed, and every *other*
+  activity in that slot becomes Cancelled. I cancel the competitors *before*
+  confirming the chosen one, so there's never even a brief moment with two
+  confirmed activities (which the database constraint would reject).
+- **Close the confirmed activity** → its slot becomes Closed. The owner can't
+  close a slot directly; a slot only closes as a side effect of its confirmed
+  activity closing.
+- **Cancel a slot** → all its activities become Cancelled.
+
+The activity and its slot always move together: `confirm`, `close`, and
+`reopen` each update both, so the slot never points at an activity in a
+contradictory state.
+
+Two edge cases the brief leaves open, and how I resolved them:
+
+- **Reopen.** The brief mentions a closed activity's access being restored "if
+  the owner reopens it", but doesn't list a Reopen action. I added `reopen()` as
+  the exact inverse of `close()` (activity and slot go Closed → Confirmed) — it
+  re-opens the joining gate that closing had shut. Reopening to Confirmed (not
+  Open) is deliberate: closing only sealed new joins, it didn't un-select the
+  activity, so the inverse shouldn't either.
+- **Cancelling the confirmed activity** is refused. The transition table never
+  says what happens to a slot if its *confirmed* activity is cancelled, and
+  doing it naively would leave the slot Confirmed with nothing confirmed. Since
+  "Cancelled" is a terminal state in the brief, I forbid it: `activity.cancel()`
+  is only for pruning still-open proposals; to undo a confirmation you cancel
+  the whole slot.
+
+**Concurrency.** Confirming touches several rows at once, so each transition runs
+in a single transaction (`@transaction.atomic`) — all of it happens, or none of
+it. On top of that, `confirm()`/`close()` take a row lock on the parent slot
+(`select_for_update`): if two people try to confirm two different activities of
+the same slot at the same moment, the second one waits for the first to finish,
+so "only one confirmed activity per slot" holds even under load. (SQLite doesn't
+do row-level locks, so the lock is a no-op there; it's the real safeguard on
+PostgreSQL in production. The database constraint is the backstop either way.)
+
+---
+
 ## Assumptions
 
 Calls I made where the brief didn't say:
@@ -188,6 +237,24 @@ Calls I made where the brief didn't say:
    a natural home, without touching the user model. For the current scope the
    simplicity wins, but if these features came up, promoting the link into its
    own `Calendar` model is the upgrade path.
+7. **Activity design choices (a few calls beyond the brief).**
+   - **Participant limit.** I added an optional `max_participants` on each
+     activity: blank = no limit, a number caps how many people can express
+     interest. It lives on the **activity**, not on the `Interest` relationship
+     — the limit is a single attribute of the activity (like its title), while
+     `Interest` rows only record *who* joined. "Is it full?" is the count of
+     interests compared against that one number, so the limit is stored once and
+     can't drift out of sync.
+   - **Categories are a fixed code list, not a database table.** The ~20
+     categories are a `TextChoices` enum, not a managed `Category` table. The
+     list is static and not user-editable, so an enum keeps validation and
+     readable labels without an extra table or join. Trade-off: changing the
+     list means a code change + migration; if categories ever became
+     admin-managed, a table would be the upgrade path.
+   - **"One confirmed activity per slot" is enforced in the database.** The
+     brief's rule is backed by a conditional `UniqueConstraint` (unique `slot`
+     where `status='confirmed'`), so the database itself refuses a second
+     confirmed activity — not just the app logic.
 
 ---
 

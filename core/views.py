@@ -4,7 +4,8 @@ from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from .models import CalendarAccess
+from .forms import AvailabilitySlotForm
+from .models import AvailabilitySlot, CalendarAccess
 
 User = get_user_model()
 
@@ -13,17 +14,44 @@ User = get_user_model()
 def my_calendar(request):
     """The owner's home page.
 
-    Shows the user's shareable link, the calendars they can access (their
-    "Other Calendars", split into active and archived), and the visitors who
-    can see their own calendar. Availability slots will be added here later.
+    Shows the user's own availability slots, their shareable link, the calendars
+    they can access (their "Other Calendars", split into active and archived),
+    and the visitors who can see their own calendar.
     """
     my_accesses = CalendarAccess.objects.filter(visitor=request.user).select_related('creator')
     visitors = CalendarAccess.objects.filter(creator=request.user).select_related('visitor')
     return render(request, 'core/my_calendar.html', {
+        'slots': request.user.slots.recent_and_upcoming(),
         'accessible': [a for a in my_accesses if not a.archived_by_visitor],
         'archived': [a for a in my_accesses if a.archived_by_visitor],
         'visitors': visitors,
     })
+
+
+@login_required
+def slot_create(request):
+    """Add a new availability slot to the current user's calendar."""
+    if request.method == 'POST':
+        form = AvailabilitySlotForm(request.POST)
+        if form.is_valid():
+            slot = form.save(commit=False)
+            slot.owner = request.user
+            slot.save()
+            messages.success(request, 'Availability slot added.')
+            return redirect('core:my_calendar')
+    else:
+        form = AvailabilitySlotForm()
+    return render(request, 'core/slot_form.html', {'form': form})
+
+
+@login_required
+@require_POST
+def slot_cancel(request, slot_id):
+    """Cancel one of the current user's slots."""
+    slot = get_object_or_404(AvailabilitySlot, id=slot_id, owner=request.user)
+    slot.cancel()
+    messages.info(request, 'Slot cancelled.')
+    return redirect('core:my_calendar')
 
 
 @login_required

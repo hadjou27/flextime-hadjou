@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block title %}Add availability — FlexTime{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>Add availability</h1>
+    <p>Pick a window of time when you're free.</p>
+  </hgroup>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <article class="error">{{ form.non_field_errors }}</article>
+    {% endif %}
+
+    <label>
+      Start
+      {{ form.start }}
+      {% for error in form.start.errors %}<small style="color:var(--pico-del-color)">{{ error }}</small>{% endfor %}
+    </label>
+
+    <label>
+      End
+      {{ form.end }}
+      {% for error in form.end.errors %}<small style="color:var(--pico-del-color)">{{ error }}</small>{% endfor %}
+    </label>
+
+    <button type="submit">Add slot</button>
+    <a href="{% url 'core:my_calendar' %}" role="button" class="secondary outline">Cancel</a>
+  </form>
+{% endblock %}

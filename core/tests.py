@@ -1,8 +1,16 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
-from .models import CalendarAccess
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError
+
+from .models import (
+    ActivitySuggestion, AvailabilitySlot, CalendarAccess, Category, Status,
+)
 
 User = get_user_model()
 
@@ -119,3 +127,162 @@ class ArchiveBlockActionTests(TestCase):
             reverse('core:archive_calendar', args=[self.alice.share_slug])
         )
         self.assertEqual(response.status_code, 404)
+
+
+class AvailabilitySlotTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='sam@example.com', first_name='Sam', last_name='S',
+        )
+        self.other = User.objects.create_user(
+            email='mia@example.com', first_name='Mia', last_name='M',
+        )
+        self.now = timezone.now()
+        self.client.force_login(self.user)
+
+    def _post_slot(self, start, end):
+        fmt = '%Y-%m-%dT%H:%M'
+        return self.client.post(reverse('core:slot_create'), {
+            'start': start.strftime(fmt), 'end': end.strftime(fmt),
+        })
+
+    def test_create_slot(self):
+        response = self._post_slot(self.now, self.now + timedelta(hours=2))
+        self.assertRedirects(response, reverse('core:my_calendar'))
+        slot = AvailabilitySlot.objects.get()
+        self.assertEqual(slot.owner, self.user)
+        self.assertEqual(slot.status, Status.OPEN)
+
+    def test_end_before_start_is_rejected(self):
+        response = self._post_slot(self.now, self.now - timedelta(hours=1))
+        self.assertEqual(response.status_code, 200)  # re-rendered form
+        self.assertFalse(AvailabilitySlot.objects.exists())
+
+    def test_cancel_slot(self):
+        slot = AvailabilitySlot.objects.create(
+            owner=self.user, start=self.now, end=self.now + timedelta(hours=1),
+        )
+        self.client.post(reverse('core:slot_cancel', args=[slot.id]))
+        slot.refresh_from_db()
+        self.assertEqual(slot.status, Status.CANCELLED)
+
+    def test_cannot_cancel_someone_elses_slot(self):
+        slot = AvailabilitySlot.objects.create(
+            owner=self.other, start=self.now, end=self.now + timedelta(hours=1),
+        )
+        response = self.client.post(reverse('core:slot_cancel', args=[slot.id]))
+        self.assertEqual(response.status_code, 404)
+
+    def test_old_slots_are_hidden_from_my_calendar(self):
+        recent = AvailabilitySlot.objects.create(
+            owner=self.user, start=self.now, end=self.now + timedelta(hours=1),
+        )
+        old = AvailabilitySlot.objects.create(
+            owner=self.user,
+            start=self.now - timedelta(days=10),
+            end=self.now - timedelta(days=10) + timedelta(hours=1),
+        )
+        response = self.client.get(reverse('core:my_calendar'))
+        slots = list(response.context['slots'])
+        self.assertIn(recent, slots)
+        self.assertNotIn(old, slots)
+
+
+class StateMachineTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='owner@example.com', first_name='Owen', last_name='O',
+        )
+        now = timezone.now()
+        self.slot = AvailabilitySlot.objects.create(
+            owner=self.user, start=now, end=now + timedelta(hours=2),
+        )
+        self.tennis = ActivitySuggestion.objects.create(
+            slot=self.slot, category=Category.TENNIS, title='Tennis',
+        )
+        self.coffee = ActivitySuggestion.objects.create(
+            slot=self.slot, category=Category.COFFEE, title='Coffee',
+        )
+
+    def _reload(self):
+        self.slot.refresh_from_db()
+        self.tennis.refresh_from_db()
+        self.coffee.refresh_from_db()
+
+    def test_confirm_sets_slot_and_cancels_siblings(self):
+        self.tennis.confirm()
+        self._reload()
+        self.assertEqual(self.tennis.status, Status.CONFIRMED)
+        self.assertEqual(self.slot.status, Status.CONFIRMED)
+        self.assertEqual(self.coffee.status, Status.CANCELLED)
+
+    def test_only_one_confirmed_activity_per_slot(self):
+        self.tennis.status = Status.CONFIRMED
+        self.tennis.save()
+        with self.assertRaises(IntegrityError):
+            self.coffee.status = Status.CONFIRMED
+            self.coffee.save()
+
+    def test_close_sets_slot_closed(self):
+        self.tennis.confirm()
+        self.tennis.close()
+        self._reload()
+        self.assertEqual(self.tennis.status, Status.CLOSED)
+        self.assertEqual(self.slot.status, Status.CLOSED)
+
+    def test_only_confirmed_activity_can_be_closed(self):
+        with self.assertRaises(ValidationError):
+            self.tennis.close()  # still open
+
+    def test_reopen_is_the_inverse_of_close(self):
+        self.tennis.confirm()
+        self.tennis.close()
+        self.tennis.reopen()
+        self._reload()
+        self.assertEqual(self.tennis.status, Status.CONFIRMED)
+        self.assertEqual(self.slot.status, Status.CONFIRMED)
+
+    def test_only_closed_activity_can_be_reopened(self):
+        with self.assertRaises(ValidationError):
+            self.tennis.reopen()  # open, not closed
+
+    def test_cancelling_a_slot_cancels_its_activities(self):
+        self.slot.cancel()
+        self._reload()
+        self.assertEqual(self.slot.status, Status.CANCELLED)
+        self.assertEqual(self.tennis.status, Status.CANCELLED)
+        self.assertEqual(self.coffee.status, Status.CANCELLED)
+
+    def test_cannot_cancel_the_confirmed_activity(self):
+        self.tennis.confirm()
+        with self.assertRaises(ValidationError):
+            self.tennis.cancel()
+
+    def test_can_cancel_an_open_activity(self):
+        self.coffee.cancel()
+        self.coffee.refresh_from_db()
+        self.assertEqual(self.coffee.status, Status.CANCELLED)
+
+
+class ActivityCapacityTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='cap@example.com', first_name='Cap', last_name='C',
+        )
+        now = timezone.now()
+        self.slot = AvailabilitySlot.objects.create(
+            owner=self.user, start=now, end=now + timedelta(hours=1),
+        )
+
+    def test_capacity_of_zero_is_rejected(self):
+        with self.assertRaises(IntegrityError):
+            ActivitySuggestion.objects.create(
+                slot=self.slot, category=Category.YOGA, title='Yoga',
+                max_participants=0,
+            )
+
+    def test_capacity_may_be_blank_for_unlimited(self):
+        activity = ActivitySuggestion.objects.create(
+            slot=self.slot, category=Category.YOGA, title='Yoga',
+        )
+        self.assertIsNone(activity.max_participants)

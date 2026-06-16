@@ -4,7 +4,39 @@
 
 {% block content %}
   <h1>My Calendar</h1>
-  <p>Welcome back, {{ user.first_name }}. Your availability slots will live here.</p>
+  <p>Welcome back, {{ user.first_name }}.</p>
+
+  <div style="display:flex; justify-content:space-between; align-items:center">
+    <h2 style="margin:0">My availability</h2>
+    <a href="{% url 'core:slot_create' %}" role="button">+ Add availability</a>
+  </div>
+  {% if slots %}
+    <table>
+      <thead>
+        <tr><th>Date</th><th>From</th><th>To</th><th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for slot in slots %}
+          <tr>
+            <td>{{ slot.start|date:"D j M" }}</td>
+            <td>{{ slot.start|time:"H:i" }}</td>
+            <td>{{ slot.end|time:"H:i" }}</td>
+            <td>{{ slot.get_status_display }}</td>
+            <td>
+              {% if slot.status != 'cancelled' %}
+                <form action="{% url 'core:slot_cancel' slot.id %}" method="post" style="margin:0">
+                  {% csrf_token %}
+                  <button type="submit" class="secondary outline">Cancel</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No availability yet. Add a slot to let your friends know when you're free.</p>
+  {% endif %}
 
   <article>
     <header><strong>Your shareable calendar link</strong></header>
