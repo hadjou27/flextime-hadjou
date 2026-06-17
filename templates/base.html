@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}FlexTime{% endblock %}</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  {% load static %}
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
 </head>
 <body>
   <nav class="container">
@@ -13,6 +15,9 @@
     </ul>
     <ul>
       {% if user.is_authenticated %}
+        <li><a href="{% url 'core:my_calendar' %}">My Calendar</a></li>
+        <li><a href="{% url 'core:consolidated' %}">Agenda</a></li>
+        <li><a href="{% url 'core:dashboard' %}">Dashboard</a></li>
         <li>{{ user.get_full_name }}</li>
         <li>
           <form action="{% url 'accounts:sign_out' %}" method="post" style="margin:0">

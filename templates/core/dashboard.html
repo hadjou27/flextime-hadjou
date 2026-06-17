@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard — FlexTime{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>Dashboard</h1>
+    <p>Who's interested in what, across your upcoming slots.</p>
+  </hgroup>
+
+  {% for slot in slots %}
+    <article>
+      <header>
+        <strong>{{ slot.start|date:"l j F" }}</strong>
+        · {{ slot.start|time:"H:i" }}–{{ slot.end|time:"H:i" }}
+        <span class="badge badge-{{ slot.status }}">{{ slot.get_status_display }}</span>
+      </header>
+
+      {% for activity in slot.activities.all %}
+        <div class="activity-card {% if activity.status == 'cancelled' %}is-cancelled{% endif %}">
+          <div class="activity-head">
+            <div>
+              <h4>{{ activity.title }}</h4>
+              <span class="category-tag">{{ activity.get_category_display }}</span>
+            </div>
+            <span class="badge badge-{{ activity.status }}">{{ activity.get_status_display }}</span>
+          </div>
+
+          {% with interests=activity.interests.all %}
+            {% if interests %}
+              <p class="meta">{{ interests|length }} interested:</p>
+              <ul>
+                {% for interest in interests %}
+                  <li>{{ interest.user.get_full_name }}</li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <p class="meta">No interest yet.</p>
+            {% endif %}
+          {% endwith %}
+        </div>
+      {% empty %}
+        <p class="meta">No activities on this slot.</p>
+      {% endfor %}
+    </article>
+  {% empty %}
+    <p>No upcoming slots yet. <a href="{% url 'core:slot_create' %}">Add availability</a> to get started.</p>
+  {% endfor %}
+{% endblock %}

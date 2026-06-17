@@ -124,6 +124,9 @@ class AvailabilitySlot(models.Model):
     status = models.CharField(
         max_length=10, choices=Status.choices, default=Status.OPEN,
     )
+    # Used to decide which slots a blocked visitor may still see: a blocked
+    # user keeps access to slots created before they were blocked.
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
 
     objects = SlotQuerySet.as_manager()
 
@@ -140,8 +143,16 @@ class AvailabilitySlot(models.Model):
         return f'{self.owner.get_short_name()}: {self.start:%Y-%m-%d %H:%M}–{self.end:%H:%M}'
 
     def clean(self):
-        if self.start and self.end and self.end <= self.start:
-            raise ValidationError({'end': 'End time must be after the start time.'})
+        if self.start and self.start < timezone.now():
+            raise ValidationError({'start': 'A slot must start in the future.'})
+        if self.start and self.end:
+            if self.end <= self.start:
+                raise ValidationError({'end': 'End time must be after the start time.'})
+            max_duration = timedelta(hours=settings.SLOT_MAX_DURATION_HOURS)
+            if self.end - self.start >= max_duration:
+                raise ValidationError({
+                    'end': f'A slot must be shorter than {settings.SLOT_MAX_DURATION_HOURS} hours.',
+                })
 
     @transaction.atomic
     def cancel(self):
@@ -275,3 +286,36 @@ class ActivitySuggestion(models.Model):
             )
         self.status = Status.CANCELLED
         self.save(update_fields=['status'])
+
+
+class Interest(models.Model):
+    """A single user's "I'm in" for a single activity.
+
+    Interest is a simple boolean modelled by the row's existence: a row means
+    interested, no row means not interested. A user may be interested in many
+    activities, but only once per activity (the unique constraint). Expressing
+    interest in one's own activities is prevented in the view, not here.
+    """
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='interests',
+    )
+    activity = models.ForeignKey(
+        ActivitySuggestion,
+        on_delete=models.CASCADE,
+        related_name='interests',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'activity'],
+                name='one_interest_per_user_per_activity',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.user.get_short_name()} → {self.activity.title}'

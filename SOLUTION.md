@@ -190,6 +190,15 @@ Two edge cases the brief leaves open, and how I resolved them:
   is only for pruning still-open proposals; to undo a confirmation you cancel
   the whole slot.
 
+**When can you propose activities?** Only while the slot is **Open** — proposing
+is the "still deciding" phase. Once an activity is confirmed (the slot becomes
+Confirmed), the choice is made, so no new activity can be added; the same holds
+once the slot is Closed or Cancelled. This is enforced both in the UI (the
+"Propose an activity" button only shows on an Open slot) and in the view (a
+direct POST to a non-Open slot is rejected). Cancelling a single *open* activity
+is different — it just prunes one proposal and leaves the slot Open, so you can
+keep proposing others; only a *confirmation* ends the proposing phase.
+
 **Concurrency.** Confirming touches several rows at once, so each transition runs
 in a single transaction (`@transaction.atomic`) — all of it happens, or none of
 it. On top of that, `confirm()`/`close()` take a row lock on the parent slot
@@ -198,6 +207,47 @@ the same slot at the same moment, the second one waits for the first to finish,
 so "only one confirmed activity per slot" holds even under load. (SQLite doesn't
 do row-level locks, so the lock is a no-op there; it's the real safeguard on
 PostgreSQL in production. The database constraint is the backstop either way.)
+
+---
+
+## Expressing interest & visibility
+
+A visitor expresses interest from the shared calendar page. Interest itself is
+just the existence of an `Interest` row, so "I'm in" creates one and "Remove
+interest" deletes it. The guards on joining:
+
+- You can't express interest in **your own** activity (the brief: interest is in
+  *other* users' activities).
+- You need an existing **calendar access** to the owner.
+- You can only join an **Open or Confirmed** activity — not a Cancelled one, and
+  not a Closed one you weren't already in.
+
+**What a visitor sees** (the visibility rules, which are the subtle part):
+
+| Activity status | Visible to a visitor? | Can newly join? |
+| --- | --- | --- |
+| Open | yes | yes |
+| Confirmed | yes | yes (may still join) |
+| Cancelled | hidden from everyone | no |
+| Closed | only if they **already** expressed interest | no (sealed to newcomers) |
+
+So confirmation hides the *losing* activities from everyone, and closing keeps
+the *winning* one visible to those already in but sealed to newcomers — exactly
+the brief's two rules. Removing interest from a *closed* activity is a one-way
+door (it then disappears for you), so the UI asks for a confirmation first.
+
+**Blocking.** A blocked visitor stops seeing slots created *after* they were
+blocked, but keeps the ones they could already see. To tell "new" from "old", a
+slot records a `created_at`, which is compared against the access's `blocked_at`.
+Nothing is deleted — blocking just narrows what's shown.
+
+A few calls the brief left open here (decided and kept simple):
+
+- **Interest rows are never deleted by status changes.** When an activity is
+  cancelled or hidden, the interest stays in the database (consistent with the
+  brief never deleting data); the activity just becomes invisible.
+- **The "are you sure?" before leaving a closed activity** is a lightweight
+  browser confirmation, since it's a single yes/no with no extra data to collect.
 
 ---
 
@@ -255,6 +305,27 @@ Calls I made where the brief didn't say:
      brief's rule is backed by a conditional `UniqueConstraint` (unique `slot`
      where `status='confirmed'`), so the database itself refuses a second
      confirmed activity — not just the app logic.
+   - **Interest is an explicit model, not a plain `ManyToManyField`.** A bare
+     many-to-many would auto-create a hidden join table, which is fine for a
+     "nude" link. But the brief models Interest as a first-class entity with a
+     `createdAt`, and I want room to add fields/logic to the relationship later
+     — and the moment you need data *on* the link, a many-to-many needs a
+     "through" model anyway, which is exactly this `Interest` class. Interest is
+     a simple boolean modelled by the row's existence (a row = interested, no
+     row = not interested), with a `unique(user, activity)` constraint so a user
+     can be interested at most once per activity.
+8. **Two sanity rules on slots the brief leaves implicit.** The brief never
+   spells these out, but they keep the data sensible:
+   - **A slot must start in the future.** Creating availability for a time that
+     has already passed makes no sense, so I reject it at creation. (This is a
+     creation-time check only — a slot that *becomes* past is normal and still
+     shows for 7 days, as the brief's display rule requires.)
+   - **A slot must be shorter than 24 hours.** Availability is "an evening", "an
+     afternoon" — not a whole week. I cap the duration; the limit lives in
+     `settings.SLOT_MAX_DURATION_HOURS` (a business rule, so it's a named
+     setting rather than a magic number or an env secret). Both checks live in
+     the model's `clean()` so the form shows a clear message; they're UX rules,
+     not data-integrity invariants, so they don't need a database constraint.
 
 ---
 
@@ -291,37 +362,57 @@ Calls I made where the brief didn't say:
 - **Archive / block actions** (POST-only, CSRF-protected, scoped to the current
   user): a visitor archives/restores a calendar; an owner blocks/unblocks a
   visitor.
-- Tests for the sign-in flow and for calendar access (auto-grant, no duplicate,
-  own-link, 404s, archive/block, POST-only).
-- Users and calendar-access records show up in the Django admin.
+- **Availability slots**: create / list / cancel, shown on My Calendar (last 7
+  days + future), with validation (future start, end after start, under 24h) and
+  a date picker that blocks past dates and end-before-start.
+- **Activity suggestions** managed from a slot's page: propose (only while the
+  slot is Open), confirm, close, reopen, cancel — driven by the model state
+  machine, with status badges and a clean card layout.
+- **Expressing interest**: a visitor joins/leaves another user's Open or
+  Confirmed activities from the shared calendar, with the full visibility rules
+  (cancelled hidden, closed visible only to those already in) and the blocking
+  effect (slots created after a block are hidden).
+- **Creator Dashboard**: a drill-down (slot → activity → interested users)
+  showing only first/last names — never emails (enforced and tested).
+- **Consolidated Calendar** ("Agenda"): one chronological, compact view merging
+  your own slots with the visible slots of every calendar you can access
+  (archived calendars excluded, blocking respected); each row links to its
+  detail.
+- All four brief views are in place (My Calendar, Other Calendars, Creator
+  Dashboard, Consolidated Calendar).
+- Tests across the whole app (58): sign-in, calendar access, slots, activities,
+  the state machine, interest, visibility, dashboard privacy, and the
+  consolidated view.
+- Users, calendar-access records, slots, activities, and interests all show up
+  in the Django admin.
 
 ---
 
 ## Omitted features
 
-These are left out **for now**, on purpose. I prioritized the foundations
-(auth, user, access relationship) first, as the brief suggests, so the parts
-above are solid before adding more.
+The core flow and all four views are done; what's left is deliberately scoped
+out for now:
 
-- **Slots, activities, interest, and the status rules.** This is the core
-  domain and the most involved part (the automatic status transitions need
-  care). I'm building it next rather than rushing it half-done.
-- **Blocking's effect on slot visibility.** The block flag and the action exist,
-  but actually hiding newly created slots from a blocked user only matters once
-  slots exist — so it ships with them.
-- **The remaining calendar pages** (My Calendar contents, Consolidated view,
-  Creator Dashboard). Left until the slots/activities exist, since there'd be
-  nothing to show without them.
-- **A calendar-style (grid) UI and full mobile polish.** A bonus, not core, so
-  it waits until the functionality is in place.
+- **Capacity enforcement** (`max_participants`). The field exists but isn't
+  enforced yet — see Future improvements.
+- **Slot / activity editing** (Update). You can create, cancel, and run the
+  status transitions, but not edit a slot's time or an activity's text after the
+  fact — re-create instead. A lower-value CRUD piece I skipped to focus on the
+  coordination flow.
+- **A calendar-style (grid) UI and full mobile polish.** A bonus, not core; the
+  current UI is a clean list/table layout rather than a month grid.
 
 ---
 
 ## Future improvements
 
-- The core flow: slots → activities → interest, with the status rules.
-- Calendar access (sharing/archiving/blocking) and the visitor pages.
-- More tests, especially for the status rules and the access rules.
+- **Enforce the `max_participants` capacity.** The field exists on the activity;
+  enforce it by treating "full" as a derived condition (interest count vs. the
+  limit) — block new interest when full, but leave the activity Confirmed and
+  never auto-close it, keeping capacity orthogonal to status.
+- **Creator Dashboard and Consolidated Calendar** — the two remaining views (the
+  data and access rules they need are already in place).
+- More tests, especially around the visibility rules and concurrency.
 - Move `SECRET_KEY` (and `DEBUG`) into the `.env` too, instead of hard-coding
   them in settings — fine for local dev, not for production.
 - Cancel links one by one (a token table) if it's ever needed.

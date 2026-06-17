@@ -3,15 +3,60 @@
 {% block title %}{{ creator.get_full_name }} — FlexTime{% endblock %}
 
 {% block content %}
+  <p><a href="{% url 'core:my_calendar' %}">← Back to My Calendar</a></p>
+
   <hgroup>
     <h1>{{ creator.get_full_name }}'s calendar</h1>
     {% if is_owner %}
       <p>This is your own calendar, as your friends see it.</p>
     {% else %}
-      <p>You now have access to this calendar. It shows up in your
-         <a href="{% url 'core:my_calendar' %}">Other Calendars</a>.</p>
+      <p>Tell {{ creator.first_name }} which activities you're interested in.</p>
     {% endif %}
   </hgroup>
 
-  <p>Availability slots and activities will appear here.</p>
+  {% for row in slot_rows %}
+    <article>
+      <header>
+        <strong>{{ row.slot.start|date:"l j F" }}</strong>
+        · {{ row.slot.start|time:"H:i" }}–{{ row.slot.end|time:"H:i" }}
+        <span class="badge badge-{{ row.slot.status }}">{{ row.slot.get_status_display }}</span>
+      </header>
+
+      {% for activity in row.activities %}
+        <div class="activity-card {% if activity.status == 'cancelled' %}is-cancelled{% endif %}">
+          <div class="activity-head">
+            <div>
+              <h4>{{ activity.title }}</h4>
+              <span class="category-tag">{{ activity.get_category_display }}</span>
+            </div>
+            <span class="badge badge-{{ activity.status }}">{{ activity.get_status_display }}</span>
+          </div>
+
+          {% if activity.description %}<p>{{ activity.description }}</p>{% endif %}
+          <p class="meta">{{ activity.interests.count }} interested</p>
+
+          {% if not is_owner %}
+            <div class="activity-actions">
+              {% if activity.viewer_interested %}
+                <form action="{% url 'core:interest_remove' activity.id %}" method="post"
+                      {% if activity.status == 'closed' %}onsubmit="return confirm('This activity is closed. If you remove your interest, you will no longer have access to it. Continue?');"{% endif %}>
+                  {% csrf_token %}
+                  <button type="submit" class="secondary outline">Remove interest</button>
+                </form>
+              {% elif activity.status == 'open' or activity.status == 'confirmed' %}
+                <form action="{% url 'core:interest_add' activity.id %}" method="post">
+                  {% csrf_token %}
+                  <button type="submit">I'm in</button>
+                </form>
+              {% endif %}
+            </div>
+          {% endif %}
+        </div>
+      {% empty %}
+        <p class="meta">No activities to show for this slot.</p>
+      {% endfor %}
+    </article>
+  {% empty %}
+    <p>No availability to show yet.</p>
+  {% endfor %}
 {% endblock %}

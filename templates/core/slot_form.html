@@ -30,4 +30,20 @@
     <button type="submit">Add slot</button>
     <a href="{% url 'core:my_calendar' %}" role="button" class="secondary outline">Cancel</a>
   </form>
+
+  <script>
+    // Keep the "end" picker from going before the chosen "start".
+    // (The server validates this too — this is just a nicer picker.)
+    const startInput = document.getElementById('id_start');
+    const endInput = document.getElementById('id_end');
+    function syncEndMin() {
+      if (startInput.value) {
+        endInput.min = startInput.value;
+        if (endInput.value && endInput.value < startInput.value) {
+          endInput.value = startInput.value;
+        }
+      }
+    }
+    startInput.addEventListener('change', syncEndMin);
+  </script>
 {% endblock %}

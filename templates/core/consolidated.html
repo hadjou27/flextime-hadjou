@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Agenda — FlexTime{% endblock %}
+
+{% block content %}
+  <div class="cal-toolbar">
+    <a href="?y={{ prev.year }}&m={{ prev.month }}" role="button" class="outline btn-sm">←</a>
+    <h1 class="cal-title">{{ month_label }}</h1>
+    <a href="?y={{ next.year }}&m={{ next.month }}" role="button" class="outline btn-sm">→</a>
+  </div>
+  <p class="meta">Your slots and your friends', on one calendar. Click a slot for details.</p>
+
+  <div class="cal-grid">
+    {% for name in weekday_names %}
+      <div class="cal-head">{{ name }}</div>
+    {% endfor %}
+
+    {% for week in weeks %}
+      {% for cell in week %}
+        <div class="cal-cell {% if not cell.in_month %}out{% endif %} {% if cell.is_today %}today{% endif %}">
+          <div class="cal-daynum">{{ cell.date.day }}</div>
+          {% for row in cell.rows %}
+            {% if row.is_own %}
+              <a class="cal-slot s-{{ row.slot.status }}" href="{% url 'core:slot_detail' row.slot.id %}">
+                {{ row.slot.start|time:"H:i" }} · You
+              </a>
+            {% else %}
+              <a class="cal-slot s-{{ row.slot.status }}" href="{% url 'core:shared_calendar' row.owner.share_slug %}">
+                {{ row.slot.start|time:"H:i" }} · {{ row.owner.first_name }}
+              </a>
+            {% endif %}
+          {% endfor %}
+        </div>
+      {% endfor %}
+    {% endfor %}
+  </div>
+{% endblock %}

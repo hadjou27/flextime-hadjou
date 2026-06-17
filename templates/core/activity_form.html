@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Propose an activity — FlexTime{% endblock %}
+
+{% block content %}
+  <p><a href="{% url 'core:slot_detail' slot.id %}">← Back to the slot</a></p>
+
+  <hgroup>
+    <h1>Propose an activity</h1>
+    <p>For {{ slot.start|date:"l j F" }}, {{ slot.start|time:"H:i" }}–{{ slot.end|time:"H:i" }}.</p>
+  </hgroup>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+
+    <label>
+      Category
+      {{ form.category }}
+      {% for error in form.category.errors %}<small style="color:var(--pico-del-color)">{{ error }}</small>{% endfor %}
+    </label>
+
+    <label>
+      Title
+      {{ form.title }}
+      {% for error in form.title.errors %}<small style="color:var(--pico-del-color)">{{ error }}</small>{% endfor %}
+    </label>
+
+    <label>
+      Description
+      {{ form.description }}
+    </label>
+
+    <button type="submit">Add activity</button>
+    <a href="{% url 'core:slot_detail' slot.id %}" role="button" class="secondary outline">Cancel</a>
+  </form>
+{% endblock %}

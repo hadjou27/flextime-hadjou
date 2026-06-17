@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Slot — FlexTime{% endblock %}
+
+{% block content %}
+  <p><a href="{% url 'core:my_calendar' %}">← Back to My Calendar</a></p>
+
+  <hgroup>
+    <h1 style="margin-bottom:.25rem">
+      {{ slot.start|date:"l j F" }}
+      <span class="badge badge-{{ slot.status }}">{{ slot.get_status_display }}</span>
+    </h1>
+    <p>{{ slot.start|time:"H:i" }} – {{ slot.end|time:"H:i" }}</p>
+  </hgroup>
+
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem">
+    <h2 style="margin:0">Activities</h2>
+    {% if slot.status == 'open' %}
+      <a href="{% url 'core:activity_create' slot.id %}" role="button">+ Propose an activity</a>
+    {% endif %}
+  </div>
+
+  {% for activity in activities %}
+    <article class="activity-card {% if activity.status == 'cancelled' %}is-cancelled{% endif %}">
+      <div class="activity-head">
+        <div>
+          <h4>{{ activity.title }}</h4>
+          <span class="category-tag">{{ activity.get_category_display }}</span>
+        </div>
+        <span class="badge badge-{{ activity.status }}">{{ activity.get_status_display }}</span>
+      </div>
+
+      {% if activity.description %}<p>{{ activity.description }}</p>{% endif %}
+
+      <p class="meta">{{ activity.interests.count }} interested</p>
+
+      {% if slot.status != 'cancelled' %}
+        <div class="activity-actions">
+          {% if activity.status == 'open' %}
+            <form action="{% url 'core:activity_confirm' activity.id %}" method="post">
+              {% csrf_token %}<button type="submit">Confirm</button>
+            </form>
+            <form action="{% url 'core:activity_cancel' activity.id %}" method="post">
+              {% csrf_token %}<button type="submit" class="secondary outline">Cancel</button>
+            </form>
+          {% elif activity.status == 'confirmed' %}
+            <form action="{% url 'core:activity_close' activity.id %}" method="post">
+              {% csrf_token %}<button type="submit">Close to newcomers</button>
+            </form>
+          {% elif activity.status == 'closed' %}
+            <form action="{% url 'core:activity_reopen' activity.id %}" method="post">
+              {% csrf_token %}<button type="submit" class="secondary">Reopen</button>
+            </form>
+          {% endif %}
+        </div>
+      {% endif %}
+    </article>
+  {% empty %}
+    <p>No activities yet. Propose one so your friends know what you'd like to do.</p>
+  {% endfor %}
+{% endblock %}

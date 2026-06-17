@@ -138,6 +138,9 @@ LOGIN_REDIRECT_URL = 'core:my_calendar'
 # Magic-link sign-in tokens expire after this many seconds (default: 30 min)
 MAGIC_LINK_MAX_AGE = 60 * 30
 
+# An availability slot must be shorter than this many hours.
+SLOT_MAX_DURATION_HOURS = 24
+
 # Email (SMTP) — configured via environment variables.
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = os.environ.get('EMAIL_HOST', '')

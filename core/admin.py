@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ActivitySuggestion, AvailabilitySlot, CalendarAccess
+from .models import ActivitySuggestion, AvailabilitySlot, CalendarAccess, Interest
 
 
 @admin.register(CalendarAccess)
@@ -30,3 +30,10 @@ class ActivitySuggestionAdmin(admin.ModelAdmin):
     list_display = ('title', 'category', 'slot', 'status', 'max_participants')
     list_filter = ('status', 'category')
     search_fields = ('title', 'description')
+
+
+@admin.register(Interest)
+class InterestAdmin(admin.ModelAdmin):
+    list_display = ('user', 'activity', 'created_at')
+    search_fields = ('user__email', 'user__first_name', 'user__last_name', 'activity__title')
+    readonly_fields = ('created_at',)

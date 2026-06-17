@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 
 from .models import (
-    ActivitySuggestion, AvailabilitySlot, CalendarAccess, Category, Status,
+    ActivitySuggestion, AvailabilitySlot, CalendarAccess, Category, Interest, Status,
 )
 
 User = get_user_model()
@@ -138,6 +138,7 @@ class AvailabilitySlotTests(TestCase):
             email='mia@example.com', first_name='Mia', last_name='M',
         )
         self.now = timezone.now()
+        self.future = self.now + timedelta(days=1)
         self.client.force_login(self.user)
 
     def _post_slot(self, start, end):
@@ -147,15 +148,25 @@ class AvailabilitySlotTests(TestCase):
         })
 
     def test_create_slot(self):
-        response = self._post_slot(self.now, self.now + timedelta(hours=2))
+        response = self._post_slot(self.future, self.future + timedelta(hours=2))
         self.assertRedirects(response, reverse('core:my_calendar'))
         slot = AvailabilitySlot.objects.get()
         self.assertEqual(slot.owner, self.user)
         self.assertEqual(slot.status, Status.OPEN)
 
     def test_end_before_start_is_rejected(self):
-        response = self._post_slot(self.now, self.now - timedelta(hours=1))
+        response = self._post_slot(self.future, self.future - timedelta(hours=1))
         self.assertEqual(response.status_code, 200)  # re-rendered form
+        self.assertFalse(AvailabilitySlot.objects.exists())
+
+    def test_past_slot_is_rejected(self):
+        response = self._post_slot(self.now - timedelta(days=1), self.now - timedelta(hours=22))
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(AvailabilitySlot.objects.exists())
+
+    def test_slot_of_24h_or_more_is_rejected(self):
+        response = self._post_slot(self.future, self.future + timedelta(hours=24))
+        self.assertEqual(response.status_code, 200)
         self.assertFalse(AvailabilitySlot.objects.exists())
 
     def test_cancel_slot(self):
@@ -286,3 +297,279 @@ class ActivityCapacityTests(TestCase):
             slot=self.slot, category=Category.YOGA, title='Yoga',
         )
         self.assertIsNone(activity.max_participants)
+
+
+class ActivityViewTests(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            email='owner@example.com', first_name='Owen', last_name='O',
+        )
+        self.other = User.objects.create_user(
+            email='other@example.com', first_name='Otto', last_name='O',
+        )
+        now = timezone.now()
+        self.slot = AvailabilitySlot.objects.create(
+            owner=self.owner, start=now, end=now + timedelta(hours=2),
+        )
+        self.tennis = ActivitySuggestion.objects.create(
+            slot=self.slot, category=Category.TENNIS, title='Tennis',
+        )
+        self.client.force_login(self.owner)
+
+    def test_owner_can_create_activity(self):
+        response = self.client.post(
+            reverse('core:activity_create', args=[self.slot.id]),
+            {'category': Category.COFFEE, 'title': 'Coffee', 'description': '', 'max_participants': ''},
+        )
+        self.assertRedirects(response, reverse('core:slot_detail', args=[self.slot.id]))
+        self.assertTrue(self.slot.activities.filter(title='Coffee').exists())
+
+    def test_non_owner_cannot_open_slot_detail(self):
+        self.client.force_login(self.other)
+        response = self.client.get(reverse('core:slot_detail', args=[self.slot.id]))
+        self.assertEqual(response.status_code, 404)
+
+    def test_cannot_add_activity_once_slot_is_confirmed(self):
+        self.tennis.confirm()  # slot becomes Confirmed
+        response = self.client.post(
+            reverse('core:activity_create', args=[self.slot.id]),
+            {'category': Category.COFFEE, 'title': 'Coffee', 'description': ''},
+        )
+        self.assertRedirects(response, reverse('core:slot_detail', args=[self.slot.id]))
+        self.assertFalse(self.slot.activities.filter(title='Coffee').exists())
+
+    def test_confirm_action(self):
+        coffee = ActivitySuggestion.objects.create(
+            slot=self.slot, category=Category.COFFEE, title='Coffee',
+        )
+        self.client.post(reverse('core:activity_confirm', args=[self.tennis.id]))
+        self.tennis.refresh_from_db()
+        self.slot.refresh_from_db()
+        coffee.refresh_from_db()
+        self.assertEqual(self.tennis.status, Status.CONFIRMED)
+        self.assertEqual(self.slot.status, Status.CONFIRMED)
+        self.assertEqual(coffee.status, Status.CANCELLED)
+
+    def test_cancel_confirmed_activity_shows_error_not_crash(self):
+        self.tennis.confirm()
+        response = self.client.post(
+            reverse('core:activity_cancel', args=[self.tennis.id]), follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.tennis.refresh_from_db()
+        self.assertEqual(self.tennis.status, Status.CONFIRMED)  # unchanged
+
+    def test_non_owner_cannot_act_on_activity(self):
+        self.client.force_login(self.other)
+        response = self.client.post(reverse('core:activity_confirm', args=[self.tennis.id]))
+        self.assertEqual(response.status_code, 404)
+
+    def test_owner_pages_render(self):
+        detail = self.client.get(reverse('core:slot_detail', args=[self.slot.id]))
+        self.assertEqual(detail.status_code, 200)
+        form = self.client.get(reverse('core:activity_create', args=[self.slot.id]))
+        self.assertEqual(form.status_code, 200)
+
+
+class InterestTests(TestCase):
+    def setUp(self):
+        self.alice = User.objects.create_user(
+            email='alice@example.com', first_name='Alice', last_name='A',
+        )
+        self.bob = User.objects.create_user(
+            email='bob@example.com', first_name='Bob', last_name='B',
+        )
+        now = timezone.now()
+        self.slot = AvailabilitySlot.objects.create(
+            owner=self.alice, start=now + timedelta(hours=1), end=now + timedelta(hours=3),
+        )
+        self.tennis = ActivitySuggestion.objects.create(
+            slot=self.slot, category=Category.TENNIS, title='Tennis',
+        )
+        CalendarAccess.objects.create(creator=self.alice, visitor=self.bob)
+        self.client.force_login(self.bob)
+
+    def test_visitor_can_express_interest(self):
+        self.client.post(reverse('core:interest_add', args=[self.tennis.id]))
+        self.assertTrue(Interest.objects.filter(user=self.bob, activity=self.tennis).exists())
+
+    def test_cannot_express_interest_twice(self):
+        self.client.post(reverse('core:interest_add', args=[self.tennis.id]))
+        self.client.post(reverse('core:interest_add', args=[self.tennis.id]))
+        self.assertEqual(Interest.objects.filter(activity=self.tennis).count(), 1)
+
+    def test_cannot_express_interest_in_own_activity(self):
+        self.client.force_login(self.alice)
+        self.client.post(reverse('core:interest_add', args=[self.tennis.id]))
+        self.assertFalse(Interest.objects.filter(user=self.alice).exists())
+
+    def test_cannot_express_interest_without_access(self):
+        carol = User.objects.create_user(
+            email='carol@example.com', first_name='Carol', last_name='C',
+        )
+        self.client.force_login(carol)
+        self.client.post(reverse('core:interest_add', args=[self.tennis.id]))
+        self.assertFalse(Interest.objects.filter(user=carol).exists())
+
+    def test_cannot_join_a_cancelled_activity(self):
+        self.tennis.cancel()
+        self.client.post(reverse('core:interest_add', args=[self.tennis.id]))
+        self.assertFalse(Interest.objects.filter(activity=self.tennis).exists())
+
+    def test_remove_interest(self):
+        Interest.objects.create(user=self.bob, activity=self.tennis)
+        self.client.post(reverse('core:interest_remove', args=[self.tennis.id]))
+        self.assertFalse(Interest.objects.filter(user=self.bob, activity=self.tennis).exists())
+
+
+class VisibilityTests(TestCase):
+    def setUp(self):
+        self.alice = User.objects.create_user(
+            email='alice@example.com', first_name='Alice', last_name='A',
+        )
+        self.bob = User.objects.create_user(
+            email='bob@example.com', first_name='Bob', last_name='B',
+        )
+        now = timezone.now()
+        self.slot = AvailabilitySlot.objects.create(
+            owner=self.alice, start=now + timedelta(hours=1), end=now + timedelta(hours=3),
+        )
+        self.access = CalendarAccess.objects.create(creator=self.alice, visitor=self.bob)
+        self.client.force_login(self.bob)
+
+    def _visible_activity_ids(self):
+        response = self.client.get(reverse('core:shared_calendar', args=[self.alice.share_slug]))
+        return [a.id for row in response.context['slot_rows'] for a in row['activities']]
+
+    def test_cancelled_activity_is_hidden(self):
+        tennis = ActivitySuggestion.objects.create(
+            slot=self.slot, category=Category.TENNIS, title='Tennis',
+        )
+        tennis.cancel()
+        self.assertNotIn(tennis.id, self._visible_activity_ids())
+
+    def test_closed_activity_hidden_from_non_interested(self):
+        tennis = ActivitySuggestion.objects.create(
+            slot=self.slot, category=Category.TENNIS, title='Tennis',
+        )
+        tennis.confirm()
+        tennis.close()
+        self.assertNotIn(tennis.id, self._visible_activity_ids())
+
+    def test_closed_activity_visible_to_already_interested(self):
+        tennis = ActivitySuggestion.objects.create(
+            slot=self.slot, category=Category.TENNIS, title='Tennis',
+        )
+        Interest.objects.create(user=self.bob, activity=tennis)
+        tennis.confirm()
+        tennis.close()
+        self.assertIn(tennis.id, self._visible_activity_ids())
+
+    def test_blocked_visitor_does_not_see_slots_created_after_block(self):
+        self.access.blocked_by_creator = True
+        self.access.blocked_at = timezone.now()
+        self.access.save()
+        now = timezone.now()
+        old = AvailabilitySlot.objects.create(
+            owner=self.alice, start=now + timedelta(hours=1), end=now + timedelta(hours=2),
+        )
+        AvailabilitySlot.objects.filter(pk=old.pk).update(
+            created_at=self.access.blocked_at - timedelta(hours=1),
+        )
+        new = AvailabilitySlot.objects.create(
+            owner=self.alice, start=now + timedelta(hours=1), end=now + timedelta(hours=2),
+        )
+        AvailabilitySlot.objects.filter(pk=new.pk).update(
+            created_at=self.access.blocked_at + timedelta(hours=1),
+        )
+        response = self.client.get(reverse('core:shared_calendar', args=[self.alice.share_slug]))
+        slot_ids = [row['slot'].id for row in response.context['slot_rows']]
+        self.assertIn(old.id, slot_ids)
+        self.assertNotIn(new.id, slot_ids)
+
+
+class DashboardTests(TestCase):
+    def setUp(self):
+        self.alice = User.objects.create_user(
+            email='alice@example.com', first_name='Alice', last_name='Anderson',
+        )
+        self.bob = User.objects.create_user(
+            email='bob@example.com', first_name='Bob', last_name='Brown',
+        )
+        now = timezone.now()
+        self.slot = AvailabilitySlot.objects.create(
+            owner=self.alice, start=now + timedelta(hours=1), end=now + timedelta(hours=3),
+        )
+        self.tennis = ActivitySuggestion.objects.create(
+            slot=self.slot, category=Category.TENNIS, title='Tennis',
+        )
+        Interest.objects.create(user=self.bob, activity=self.tennis)
+
+    def test_dashboard_lists_interested_users_by_name(self):
+        self.client.force_login(self.alice)
+        response = self.client.get(reverse('core:dashboard'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Bob Brown')
+
+    def test_dashboard_never_exposes_email(self):
+        self.client.force_login(self.alice)
+        response = self.client.get(reverse('core:dashboard'))
+        self.assertNotContains(response, 'bob@example.com')
+
+    def test_dashboard_requires_login(self):
+        response = self.client.get(reverse('core:dashboard'))
+        self.assertIn(reverse('accounts:sign_in'), response.url)
+
+
+class ConsolidatedCalendarTests(TestCase):
+    def setUp(self):
+        self.alice = User.objects.create_user(
+            email='alice@example.com', first_name='Alice', last_name='A',
+        )
+        self.carol = User.objects.create_user(
+            email='carol@example.com', first_name='Carol', last_name='C',
+        )
+        now = timezone.now()
+        self.own = AvailabilitySlot.objects.create(
+            owner=self.alice, start=now + timedelta(hours=2), end=now + timedelta(hours=3),
+        )
+        self.friend_slot = AvailabilitySlot.objects.create(
+            owner=self.carol, start=now + timedelta(hours=1), end=now + timedelta(hours=2),
+        )
+        self.access = CalendarAccess.objects.create(creator=self.carol, visitor=self.alice)
+        self.client.force_login(self.alice)
+
+    def _slot_ids(self):
+        response = self.client.get(reverse('core:consolidated'))
+        return [row['slot'].id for row in response.context['rows']]
+
+    def test_combines_own_and_accessible_slots(self):
+        ids = self._slot_ids()
+        self.assertIn(self.own.id, ids)
+        self.assertIn(self.friend_slot.id, ids)
+
+    def test_rows_are_chronological(self):
+        response = self.client.get(reverse('core:consolidated'))
+        starts = [row['slot'].start for row in response.context['rows']]
+        self.assertEqual(starts, sorted(starts))
+
+    def test_archived_calendar_is_excluded(self):
+        self.access.set_archived(True)
+        ids = self._slot_ids()
+        self.assertNotIn(self.friend_slot.id, ids)
+        self.assertIn(self.own.id, ids)
+
+    def test_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse('core:consolidated'))
+        self.assertIn(reverse('accounts:sign_in'), response.url)
+
+    def test_grid_weeks_have_seven_days(self):
+        response = self.client.get(reverse('core:consolidated'))
+        self.assertTrue(response.context['weeks'])
+        for week in response.context['weeks']:
+            self.assertEqual(len(week), 7)
+
+    def test_month_navigation(self):
+        response = self.client.get(reverse('core:consolidated'), {'y': 2030, 'm': 1})
+        self.assertContains(response, 'January 2030')
