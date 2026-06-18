@@ -49,14 +49,14 @@
 
   <h2>Other Calendars</h2>
   {% if accessible %}
-    <ul>
+    <ul class="people">
       {% for access in accessible %}
-        <li>
-          <a href="{% url 'core:shared_calendar' access.creator.share_slug %}">
+        <li class="person">
+          <span class="avatar">{{ access.creator.first_name|first }}{{ access.creator.last_name|first }}</span>
+          <a class="person-name" href="{% url 'core:shared_calendar' access.creator.share_slug %}">
             {{ access.creator.get_full_name }}
           </a>
-          <form action="{% url 'core:archive_calendar' access.creator.share_slug %}"
-                method="post" class="btn-sm-form">
+          <form action="{% url 'core:archive_calendar' access.creator.share_slug %}" method="post">
             {% csrf_token %}
             <button type="submit" class="secondary outline btn-sm">Archive</button>
           </form>
@@ -64,19 +64,19 @@
       {% endfor %}
     </ul>
   {% else %}
-    <p>You haven't opened anyone's calendar yet. When a friend shares their link
-       and you open it, their calendar will appear here.</p>
+    <p class="meta">You haven't opened anyone's calendar yet. When a friend shares their
+       link and you open it, their calendar will appear here.</p>
   {% endif %}
 
   {% if archived %}
     <details>
       <summary>Archived calendars ({{ archived|length }})</summary>
-      <ul>
+      <ul class="people">
         {% for access in archived %}
-          <li>
-            {{ access.creator.get_full_name }}
-            <form action="{% url 'core:unarchive_calendar' access.creator.share_slug %}"
-                  method="post" class="btn-sm-form">
+          <li class="person">
+            <span class="avatar">{{ access.creator.first_name|first }}{{ access.creator.last_name|first }}</span>
+            <span class="person-name">{{ access.creator.get_full_name }}</span>
+            <form action="{% url 'core:unarchive_calendar' access.creator.share_slug %}" method="post">
               {% csrf_token %}
               <button type="submit" class="secondary outline btn-sm">Restore</button>
             </form>
@@ -88,20 +88,23 @@
 
   <h2>Your visitors</h2>
   {% if visitors %}
-    <ul>
+    <ul class="people">
       {% for access in visitors %}
-        <li>
-          {{ access.visitor.get_full_name }}
+        <li class="person {% if access.blocked_by_creator %}is-blocked{% endif %}">
+          <span class="avatar">{{ access.visitor.first_name|first }}{{ access.visitor.last_name|first }}</span>
+          <span class="person-name">
+            {{ access.visitor.get_full_name }}
+            {% if access.blocked_by_creator %}
+              <small class="blocked-tag" data-tooltip="Blocked — they no longer see new slots">🚫 blocked</small>
+            {% endif %}
+          </span>
           {% if access.blocked_by_creator %}
-            <span data-tooltip="Blocked — they no longer see new slots">🚫 blocked</span>
-            <form action="{% url 'core:unblock_visitor' access.visitor.id %}"
-                  method="post" class="btn-sm-form">
+            <form action="{% url 'core:unblock_visitor' access.visitor.id %}" method="post">
               {% csrf_token %}
               <button type="submit" class="secondary outline btn-sm">Unblock</button>
             </form>
           {% else %}
-            <form action="{% url 'core:block_visitor' access.visitor.id %}"
-                  method="post" class="btn-sm-form">
+            <form action="{% url 'core:block_visitor' access.visitor.id %}" method="post">
               {% csrf_token %}
               <button type="submit" class="contrast outline btn-sm">Block</button>
             </form>
@@ -110,6 +113,6 @@
       {% endfor %}
     </ul>
   {% else %}
-    <p>No one has opened your calendar yet.</p>
+    <p class="meta">No one has opened your calendar yet.</p>
   {% endif %}
 {% endblock %}

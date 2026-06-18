@@ -1,3 +1,8 @@
+/* Tone down Pico's oversized default headings. */
+h1 { font-size: 1.8rem; }
+h2 { font-size: 1.25rem; margin-top: 2rem; }
+h3 { font-size: 1.1rem; }
+
 /* Status badges, shared by slots and activities. */
 .badge {
   display: inline-block;
@@ -54,6 +59,46 @@
   vertical-align: middle;
 }
 .btn-sm-form { display: inline-block; margin: 0; vertical-align: middle; }
+
+/* --- People rows (Other Calendars / Your visitors) --- */
+.people {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.person {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+}
+.person .avatar {
+  flex: 0 0 auto;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.person .person-name {
+  flex: 1 1 auto;
+  font-weight: 500;
+  text-decoration: none;
+}
+.person.is-blocked .avatar { background: var(--pico-muted-color); }
+.person .blocked-tag { color: var(--pico-del-color); font-weight: 500; }
+.person form { margin: 0; flex: 0 0 auto; }
 
 /* --- Calendar grid (the Agenda view) --- */
 .cal-toolbar {

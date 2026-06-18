@@ -26,7 +26,13 @@ load_dotenv(BASE_DIR / '.env')
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-#%p%*!%&x4z)ay(ip5g7dcbawae@jnj6z=hm@zr$=!i8+y-j(&'
+# It signs sessions AND the magic-link tokens, so a leaked key means account
+# takeover. In production it MUST come from the environment; the fallback below
+# is a throwaway for local dev only (this repo is public, so it's not a secret).
+SECRET_KEY = os.environ.get(
+    'SECRET_KEY',
+    'django-insecure-4s8$i))*l2ceq5r&z9olo_)pwdx92&rye%bbv=csbf4ss(0pgs',
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -137,6 +143,13 @@ LOGIN_REDIRECT_URL = 'core:my_calendar'
 
 # Magic-link sign-in tokens expire after this many seconds (default: 30 min)
 MAGIC_LINK_MAX_AGE = 60 * 30
+
+# Rate limit for requesting magic links: at most MAGIC_LINK_RATE_LIMIT sends per
+# MAGIC_LINK_RATE_WINDOW seconds, counted per email address and per client IP.
+# This stops someone from flooding a victim's inbox (email bombing) or creating
+# accounts in bulk.
+MAGIC_LINK_RATE_LIMIT = 3
+MAGIC_LINK_RATE_WINDOW = 60 * 10
 
 # An availability slot must be shorter than this many hours.
 SLOT_MAX_DURATION_HOURS = 24

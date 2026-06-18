@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Create an account — FlexTime{% endblock %}
+
+{% block content %}
+  <hgroup>
+    <h1>Create your FlexTime account</h1>
+    <p>Tell us who you are. We'll email you a sign-in link — no password needed.</p>
+  </hgroup>
+
+  <form method="post" novalidate>
+    {% csrf_token %}
+    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+
+    {% if form.non_field_errors %}
+      <article class="error">{{ form.non_field_errors }}</article>
+    {% endif %}
+
+    <div class="grid">
+      <label>
+        First name
+        {{ form.first_name }}
+        {% for error in form.first_name.errors %}<small style="color:var(--pico-del-color)">{{ error }}</small>{% endfor %}
+      </label>
+      <label>
+        Last name
+        {{ form.last_name }}
+        {% for error in form.last_name.errors %}<small style="color:var(--pico-del-color)">{{ error }}</small>{% endfor %}
+      </label>
+    </div>
+
+    <label>
+      Email
+      {{ form.email }}
+      {% for error in form.email.errors %}<small style="color:var(--pico-del-color)">{{ error }}</small>{% endfor %}
+    </label>
+
+    <button type="submit">Send me a sign-in link</button>
+  </form>
+
+  <p><small>Already have an account?
+    <a href="{% url 'accounts:sign_in' %}{% if next %}?next={{ next|urlencode }}{% endif %}">Sign in</a>.
+  </small></p>
+{% endblock %}

@@ -421,6 +421,33 @@ class InterestTests(TestCase):
         self.client.post(reverse('core:interest_remove', args=[self.tennis.id]))
         self.assertFalse(Interest.objects.filter(user=self.bob, activity=self.tennis).exists())
 
+    def test_blocked_visitor_cannot_join_a_post_block_activity(self):
+        # Blocking must hold even if the visitor guesses the activity id: a slot
+        # created after the block is invisible to them and can't be joined.
+        access = CalendarAccess.objects.get(creator=self.alice, visitor=self.bob)
+        access.set_blocked(True)
+        new_slot = AvailabilitySlot.objects.create(
+            owner=self.alice,
+            start=timezone.now() + timedelta(hours=1),
+            end=timezone.now() + timedelta(hours=2),
+        )
+        AvailabilitySlot.objects.filter(pk=new_slot.pk).update(
+            created_at=access.blocked_at + timedelta(hours=1),
+        )
+        activity = ActivitySuggestion.objects.create(
+            slot=new_slot, category=Category.COFFEE, title='Coffee',
+        )
+        self.client.post(reverse('core:interest_add', args=[activity.id]))
+        self.assertFalse(Interest.objects.filter(user=self.bob, activity=activity).exists())
+
+    def test_blocked_visitor_can_still_join_a_pre_block_activity(self):
+        # The slot from setUp existed before the block, so it stays joinable —
+        # blocking only cuts off what was created afterwards.
+        access = CalendarAccess.objects.get(creator=self.alice, visitor=self.bob)
+        access.set_blocked(True)
+        self.client.post(reverse('core:interest_add', args=[self.tennis.id]))
+        self.assertTrue(Interest.objects.filter(user=self.bob, activity=self.tennis).exists())
+
 
 class VisibilityTests(TestCase):
     def setUp(self):

@@ -89,13 +89,25 @@ A normal user never has a real password — the manager calls
 exception is the admin superuser, who keeps a password so I can use the Django
 admin.
 
-There are two flows, like the brief asks:
+There are two flows, like the brief asks, and I keep them on **two separate
+pages** so each only asks for what it needs (rather than one combined form that
+shows name fields to everyone):
 
-- **New user:** gives first name, last name, email → the account is created
-  (its shareable calendar link is generated at the same time) → a magic link is
-  emailed.
-- **Coming back, logged out:** gives just the email → a fresh magic link is
-  emailed. No new account.
+- **Sign up** (`/sign-up/`): first name, last name, email → the account is
+  created (its shareable calendar link is generated at the same time) → a magic
+  link is emailed. Submitting an email that already exists is refused with a
+  pointer to sign in. On top of the format check, the email is run through a
+  validator that rejects **disposable / throwaway domains** (mailinator, yopmail,
+  …) — an account should be tied to a lasting address, since that's where every
+  magic link goes. The denylist (`accounts/validators.py`) is small and
+  representative; a production app would use a maintained list.
+- **Sign in** (`/sign-in/`): email only → a fresh magic link is emailed. No new
+  account. An unknown email is refused with a pointer to sign up.
+
+Each page links to the other (carrying any `?next=`), so a visitor who lands on
+the wrong one is one click away from the right one. The trade-off: splitting the
+flows makes the pages tell you whether an email is registered (a mild
+user-enumeration signal). Acceptable here, and the rate limit blunts probing.
 
 **Sending you back where you came from.** If you click a shared calendar link
 while logged out, `@login_required` sends you to sign-in with a `?next=` URL
@@ -104,6 +116,24 @@ so I stash it in the session and, after the link is verified, redirect you to
 it — back to the calendar you originally clicked. The target is checked with
 `url_has_allowed_host_and_scheme` (against the current host) so it can only ever
 be a page on our own site, never an outside redirect.
+
+**Rate limiting the magic-link request.** Both forms email a link on every
+submit (and sign-up also creates an account), so without a guard anyone could
+flood a victim's inbox (email bombing) or create accounts in bulk. I cap
+requests at `MAGIC_LINK_RATE_LIMIT` per
+`MAGIC_LINK_RATE_WINDOW` seconds (defaults: 3 per 10 minutes), counted **per
+email address and per client IP** — the email key protects a specific victim's
+inbox, the IP key stops an attacker who just varies the email. The IP is read
+from `REMOTE_ADDR` (the actual connection), **not** `X-Forwarded-For`: with no
+trusted proxy in front, a client could set that header freely and reset its own
+counter on every request. The counter lives
+in Django's cache: `cache.add` creates it (with its expiry) only when absent, so
+the window starts on the first hit and isn't pushed back by later ones; a later
+`cache.incr` tells me how many hits have landed. The check runs **before** the
+account is created, so a blocked request creates neither an email nor an
+account. No extra dependency — plain Django cache. (In production with multiple
+processes the default per-process `LocMemCache` won't share counts, so this
+needs a shared backend like Redis — noted under Future improvements.)
 
 ---
 
@@ -239,7 +269,12 @@ door (it then disappears for you), so the UI asks for a confirmation first.
 **Blocking.** A blocked visitor stops seeing slots created *after* they were
 blocked, but keeps the ones they could already see. To tell "new" from "old", a
 slot records a `created_at`, which is compared against the access's `blocked_at`.
-Nothing is deleted — blocking just narrows what's shown.
+Nothing is deleted — blocking just narrows what's shown. The same
+`created_at` vs `blocked_at` check also guards the *join* path (expressing
+interest), not only the display: since activity ids are sequential, hiding a
+post-block slot from the page isn't enough — a blocked visitor could otherwise
+guess an id and join an activity they shouldn't even see, so `interest_add`
+re-checks the block before letting them in.
 
 A few calls the brief left open here (decided and kept simple):
 
@@ -346,9 +381,13 @@ Calls I made where the brief didn't say:
 - Custom passwordless user + its manager.
 - A shareable calendar link per user (token + slug), generated automatically and
   impossible to guess.
-- **Full magic-link auth**: sign-up/sign-in form, the emailed link, token
-  verification, and sign-out. New users sign up in one step; returning users
-  just enter their email.
+- **Full magic-link auth**: separate sign-up and sign-in pages, the emailed
+  link, token verification, and sign-out. New users sign up in one step;
+  returning users just enter their email.
+- **Rate limiting on magic-link requests** (per email + per IP, via the cache),
+  so the sign-in form can't be used for email bombing or bulk account creation.
+- **`SECRET_KEY` read from the environment** (with a dev-only fallback), so the
+  key that signs sessions and magic-link tokens never lives in the public repo.
 - Sign-in / "check your email" / My Calendar pages (Pico.css), with a sign-out
   button and flash messages.
 - SMTP email loaded from a gitignored `.env`.
@@ -380,9 +419,11 @@ Calls I made where the brief didn't say:
   detail.
 - All four brief views are in place (My Calendar, Other Calendars, Creator
   Dashboard, Consolidated Calendar).
-- Tests across the whole app (58): sign-in, calendar access, slots, activities,
-  the state machine, interest, visibility, dashboard privacy, and the
-  consolidated view.
+- Tests across the whole app (68): the two sign-in/sign-up flows (including the
+  disposable-email block), the magic-link rate limit (per email
+  and per IP), calendar access, slots, activities, the state machine, interest
+  (including that blocking guards the join path, not just the display),
+  visibility, dashboard privacy, and the consolidated view.
 - Users, calendar-access records, slots, activities, and interests all show up
   in the Django admin.
 
@@ -413,8 +454,13 @@ out for now:
 - **Creator Dashboard and Consolidated Calendar** — the two remaining views (the
   data and access rules they need are already in place).
 - More tests, especially around the visibility rules and concurrency.
-- Move `SECRET_KEY` (and `DEBUG`) into the `.env` too, instead of hard-coding
-  them in settings — fine for local dev, not for production.
+- Move `DEBUG` (and `ALLOWED_HOSTS`) into the `.env` too, and add the
+  HTTPS-only cookie / HSTS settings for production. (`SECRET_KEY` already comes
+  from the environment.)
 - Cancel links one by one (a token table) if it's ever needed.
+- **A shared cache backend (e.g. Redis) for the magic-link rate limit.** The
+  default `LocMemCache` is per-process, so with several workers each keeps its
+  own counter and the real limit becomes `workers × MAGIC_LINK_RATE_LIMIT`. Fine
+  for the single-process dev server; production needs a shared backend.
 - A nicer calendar-style UI that works well on mobile.
 - Docker for easy deployment.

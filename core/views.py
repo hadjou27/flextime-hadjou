@@ -354,12 +354,21 @@ def interest_add(request, activity_id):
         messages.error(request, "You can't express interest in your own activity.")
         return redirect('core:slot_detail', slot_id=activity.slot_id)
 
-    has_access = CalendarAccess.objects.filter(
+    access = CalendarAccess.objects.filter(
         creator=creator, visitor=request.user,
-    ).exists()
-    if not has_access:
+    ).first()
+    if access is None:
         messages.error(request, 'You need access to this calendar first.')
         return redirect('core:my_calendar')
+
+    # A blocked visitor keeps the slots they could already see, but can't act on
+    # anything created after the block — mirroring what shared_calendar shows
+    # them. Without this, a blocked user could guess an activity id and join a
+    # slot they shouldn't even see.
+    if (access.blocked_by_creator and access.blocked_at
+            and activity.slot.created_at > access.blocked_at):
+        messages.error(request, 'This activity can no longer be joined.')
+        return redirect('core:shared_calendar', share_slug=creator.share_slug)
 
     if activity.status not in (Status.OPEN, Status.CONFIRMED):
         messages.error(request, 'This activity can no longer be joined.')

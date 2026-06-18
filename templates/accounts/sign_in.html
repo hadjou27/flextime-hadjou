@@ -22,14 +22,10 @@
       {% for error in form.email.errors %}<small style="color:var(--pico-del-color)">{{ error }}</small>{% endfor %}
     </label>
 
-    <fieldset>
-      <small>New here? Add your name (returning users can leave these blank).</small>
-      <div class="grid">
-        <label>{{ form.first_name }}</label>
-        <label>{{ form.last_name }}</label>
-      </div>
-    </fieldset>
-
     <button type="submit">Send me a sign-in link</button>
   </form>
+
+  <p><small>New to FlexTime?
+    <a href="{% url 'accounts:sign_up' %}{% if next %}?next={{ next|urlencode }}{% endif %}">Create an account</a>.
+  </small></p>
 {% endblock %}
