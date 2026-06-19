@@ -53,6 +53,34 @@ def slot_create(request):
 
 
 @login_required
+def slot_edit(request, slot_id):
+    """Edit one of the owner's slots. Allowed only while the slot is still Open —
+    once an activity is confirmed (or the slot is closed/cancelled) the time is
+    settled and interested friends are counting on it."""
+    slot = get_object_or_404(AvailabilitySlot, id=slot_id, owner=request.user)
+    if slot.status != Status.OPEN:
+        messages.error(request, 'You can only edit a slot while it is open.')
+        return redirect('core:slot_detail', slot_id=slot.id)
+    if request.method == 'POST':
+        form = AvailabilitySlotForm(request.POST, instance=slot)
+        if form.is_valid():
+            form.save()
+            messages.success(request, 'Slot updated.')
+            return redirect('core:slot_detail', slot_id=slot.id)
+    else:
+        form = AvailabilitySlotForm(instance=slot)
+    # People can express interest in an Open slot's activities, and the app has
+    # no notifications — so warn the owner that changing the time affects them.
+    interested_count = (
+        Interest.objects.filter(activity__slot=slot).values('user').distinct().count()
+    )
+    return render(request, 'core/slot_form.html', {
+        'form': form, 'editing': True, 'slot': slot,
+        'interested_count': interested_count,
+    })
+
+
+@login_required
 @require_POST
 def slot_cancel(request, slot_id):
     """Cancel one of the current user's slots."""
@@ -193,24 +221,35 @@ def creator_dashboard(request):
 
 def _accessible_slot_rows(user):
     """The user's own slots plus the visible slots from every calendar they can
-    access (archived calendars excluded, blocking respected)."""
+    access (archived calendars excluded, blocking respected).
+
+    Uses a constant number of queries regardless of how many calendars the user
+    follows: one for the access records, one for *all* their slots at once. The
+    per-calendar blocking cut-off (each has its own ``blocked_at``) is applied in
+    Python rather than as one query per calendar.
+    """
     rows = [
         {'slot': slot, 'owner': user, 'is_own': True}
         for slot in user.slots.recent_and_upcoming()
     ]
-    accesses = (
-        CalendarAccess.objects
+
+    accesses = {
+        access.creator_id: access
+        for access in CalendarAccess.objects
         .filter(visitor=user, archived_by_visitor=False)
         .select_related('creator')
+    }
+    friend_slots = (
+        AvailabilitySlot.objects.recent_and_upcoming().filter(owner_id__in=accesses)
     )
-    for access in accesses:
-        slots = access.creator.slots.recent_and_upcoming()
-        if access.blocked_by_creator and access.blocked_at:
-            slots = slots.filter(created_at__lte=access.blocked_at)
-        rows += [
-            {'slot': slot, 'owner': access.creator, 'is_own': False}
-            for slot in slots
-        ]
+    for slot in friend_slots:
+        access = accesses[slot.owner_id]
+        # Blocked visitor: keep only what was created before the block.
+        if (access.blocked_by_creator and access.blocked_at
+                and slot.created_at > access.blocked_at):
+            continue
+        rows.append({'slot': slot, 'owner': access.creator, 'is_own': False})
+
     rows.sort(key=lambda row: row['slot'].start)
     return rows
 
@@ -293,6 +332,38 @@ def _owner_activity(request, activity_id):
     return get_object_or_404(
         ActivitySuggestion, id=activity_id, slot__owner=request.user,
     )
+
+
+@login_required
+def activity_edit(request, activity_id):
+    """Edit one of the owner's activities. Allowed while it's still Open or
+    Confirmed — once it's Closed or Cancelled the content is settled.
+
+    Once Confirmed, the category is locked: it's the chosen activity and people
+    have joined it *for that category*, so only the title/description stay
+    editable. A disabled field also ignores any value smuggled in via POST.
+    """
+    activity = _owner_activity(request, activity_id)
+    if activity.status in (Status.CLOSED, Status.CANCELLED):
+        messages.error(request, 'You can only edit an activity while it is open or confirmed.')
+        return redirect('core:slot_detail', slot_id=activity.slot_id)
+
+    category_locked = activity.status == Status.CONFIRMED
+    form = ActivitySuggestionForm(request.POST or None, instance=activity)
+    if category_locked:
+        form.fields['category'].disabled = True
+
+    if request.method == 'POST' and form.is_valid():
+        form.save()
+        messages.success(request, f'Updated "{activity.title}".')
+        return redirect('core:slot_detail', slot_id=activity.slot_id)
+
+    # People already interested signed up for this content — warn before editing.
+    return render(request, 'core/activity_form.html', {
+        'form': form, 'editing': True, 'slot': activity.slot,
+        'category_locked': category_locked,
+        'interested_count': activity.interests.count(),
+    })
 
 
 def _run_transition(request, activity, action, label):

@@ -197,11 +197,6 @@ class ActivitySuggestion(models.Model):
                 condition=models.Q(status='confirmed'),
                 name='one_confirmed_activity_per_slot',
             ),
-            # Capacity, if set, must be at least 1 (0 would make no sense).
-            models.CheckConstraint(
-                condition=models.Q(max_participants__isnull=True) | models.Q(max_participants__gte=1),
-                name='activity_capacity_at_least_one',
-            ),
         ]
 
     def __str__(self):

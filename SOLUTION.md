@@ -22,7 +22,10 @@ pip install -r requirements.txt
 # 3. Set up your email credentials (see "Email setup" below)
 cp .env.example .env   # then edit .env with your SMTP details
 
-# 4. Apply migrations
+# 4. Generate the migrations from the models, then apply them.
+#    Migration files are intentionally not committed to the repo, so you
+#    regenerate them from the current models here before applying.
+python manage.py makemigrations
 python manage.py migrate
 
 # 5. (Optional) create an admin account to look at the data
@@ -169,8 +172,14 @@ The flow, in short:
 Blocking and archiving are reversible flags on that record (each with its own
 timestamp); nothing is ever deleted:
 
-- A **visitor** can archive a calendar (it drops out of their "Other Calendars",
-  into a collapsible "Archived" section they can restore from).
+- A **visitor** can archive a calendar — it leaves their "Other Calendars" for a
+  separate "Archived" section they can restore from. Archiving only *hides* it
+  from the list (the brief: it "removes the calendar from their own visible
+  list"); it does not revoke access. So the archived entry deliberately has **no
+  link to the calendar** — you Restore it first, then open it. The brief says
+  nothing about the *direct* share URL, so that link still works for an archived
+  calendar; making "archived = not openable even by its link" would be a stricter
+  opt-in, but it's beyond what the brief asks, so I left it out.
 - An **owner** can block a visitor from their list of visitors.
 
 Both run as POST-only actions (`@require_POST` + CSRF token), and each view
@@ -361,6 +370,36 @@ Calls I made where the brief didn't say:
      setting rather than a magic number or an env secret). Both checks live in
      the model's `clean()` so the form shows a clear message; they're UX rules,
      not data-integrity invariants, so they don't need a database constraint.
+9. **When editing (Update) is allowed — and what stays locked.** The brief lists
+   `Update` for slots and activities but doesn't say *when* it's permitted, so I
+   tied it to the state machine, on one principle: **never let an edit betray
+   people who are already counting on something, and never edit a settled state.**
+   - **A slot's time is editable only while it's Open.** Once an activity is
+     Confirmed, friends have positioned themselves on that time — silently moving
+     it would mislead them. Closed/Cancelled are settled, so no edit either. To
+     reschedule a confirmed slot, you cancel it and make a new one.
+   - **An activity is editable while Open or Confirmed, but not once Closed or
+     Cancelled.** A closed activity is sealed and people joined it as-is; a
+     cancelled one won't happen. To edit a closed one, the owner uses the
+     existing **Reopen** transition first (Closed → Confirmed), which is the
+     explicit "un-seal" step — then edits.
+   - **A Confirmed activity's category is locked.** Title and description stay
+     editable (fixing a typo, adding details), but the *category* is the essence
+     of "what we're doing" — people expressed interest **for that category**, so
+     turning a confirmed "Tennis" into "Cinema" would be a bait-and-switch. I
+     enforce it by disabling the form field (Django then also ignores any value
+     smuggled in via POST, so it's a real guard, not just a UI hint).
+   - **Two honest limits, both softened by a warning.** (1) On a Confirmed
+     activity the title/description stay editable while only the category is
+     locked — the intent is *refinement* (e.g. adding "bring your racket"), not
+     *redefinition*, though nothing technically stops a misleading rename;
+     locking the category (the structural "what") covers the main bait-and-switch
+     risk. (2) People can express interest as soon as an activity is Open, so
+     editing a slot's time *or* an activity's content can affect those already
+     interested — the same concern that locks a *confirmed* slot. Since the app
+     has no notifications, I don't block these edits, but **both the slot- and
+     activity-edit forms warn the owner** ("N people have already shown
+     interest…") and ask for confirmation before saving.
 
 ---
 
@@ -401,11 +440,11 @@ Calls I made where the brief didn't say:
 - **Archive / block actions** (POST-only, CSRF-protected, scoped to the current
   user): a visitor archives/restores a calendar; an owner blocks/unblocks a
   visitor.
-- **Availability slots**: create / list / cancel, shown on My Calendar (last 7
-  days + future), with validation (future start, end after start, under 24h) and
-  a date picker that blocks past dates and end-before-start.
+- **Availability slots**: create / edit / list / cancel, shown on My Calendar
+  (last 7 days + future), with validation (future start, end after start, under
+  24h) and a date picker that blocks past dates and end-before-start.
 - **Activity suggestions** managed from a slot's page: propose (only while the
-  slot is Open), confirm, close, reopen, cancel — driven by the model state
+  slot is Open), edit, confirm, close, reopen, cancel — driven by the model state
   machine, with status badges and a clean card layout.
 - **Expressing interest**: a visitor joins/leaves another user's Open or
   Confirmed activities from the shared calendar, with the full visibility rules
@@ -413,17 +452,34 @@ Calls I made where the brief didn't say:
   effect (slots created after a block are hidden).
 - **Creator Dashboard**: a drill-down (slot → activity → interested users)
   showing only first/last names — never emails (enforced and tested).
-- **Consolidated Calendar** ("Agenda"): one chronological, compact view merging
-  your own slots with the visible slots of every calendar you can access
-  (archived calendars excluded, blocking respected); each row links to its
-  detail.
+- **Consolidated Calendar** ("Agenda"): a **month grid** merging your own slots
+  with the visible slots of every calendar you can access (archived excluded,
+  blocking respected). The brief describes this view as a compact list whose
+  purpose is to "grasp what's happening on a given day without being overwhelmed
+  by detail" — I took that goal literally and rendered it as a **calendar-style
+  grid** (the bonus UI), since a whole month at a glance serves that purpose even
+  better than a list. Each day cell lists its slots compactly as
+  `start–end · owner`, with the status shown as a colour and the full
+  `start–end · owner · status` in a hover tooltip; clicking a slot opens its
+  detail. Slots stay in chronological order within each day.
 - All four brief views are in place (My Calendar, Other Calendars, Creator
   Dashboard, Consolidated Calendar).
-- Tests across the whole app (68): the two sign-in/sign-up flows (including the
-  disposable-email block), the magic-link rate limit (per email
-  and per IP), calendar access, slots, activities, the state machine, interest
-  (including that blocking guards the join path, not just the display),
-  visibility, dashboard privacy, and the consolidated view.
+- Tests across the whole app (76): the two sign-in/sign-up flows (including the
+  disposable-email block), the magic-link rate limit (per email and per IP),
+  calendar access, slots, activities, editing (Update) with its state-machine
+  rules and the confirmed-category lock, the state machine, interest (including
+  that blocking guards the join path, not just the display), visibility,
+  dashboard privacy, and the consolidated view.
+  - **Mostly integration tests**: they drive real requests through Django's test
+    client (URL → view → form → ORM → rendered HTML) — e.g. posting the sign-in
+    form and following the emailed link, expressing interest and checking both
+    the database and what the page shows, or asserting an email never appears in
+    the dashboard's HTML.
+  - **Plus unit tests** for the pieces worth testing in isolation: the model
+    state machine (`confirm`/`close`/`reopen`/`cancel` called directly) and the
+    magic-link token (`make`/`read_login_token`).
+  - No browser/end-to-end tests (Selenium/Playwright) — out of scope; the test
+    client covers the request/response layer without a real browser.
 - Users, calendar-access records, slots, activities, and interests all show up
   in the Django admin.
 
@@ -436,12 +492,9 @@ out for now:
 
 - **Capacity enforcement** (`max_participants`). The field exists but isn't
   enforced yet — see Future improvements.
-- **Slot / activity editing** (Update). You can create, cancel, and run the
-  status transitions, but not edit a slot's time or an activity's text after the
-  fact — re-create instead. A lower-value CRUD piece I skipped to focus on the
-  coordination flow.
-- **A calendar-style (grid) UI and full mobile polish.** A bonus, not core; the
-  current UI is a clean list/table layout rather than a month grid.
+- **Full mobile polish.** The Agenda already uses a calendar-style month grid
+  (with a small-screen breakpoint), but I didn't do a thorough mobile-first pass
+  across every page — a bonus, not core.
 
 ---
 
@@ -451,8 +504,12 @@ out for now:
   enforce it by treating "full" as a derived condition (interest count vs. the
   limit) — block new interest when full, but leave the activity Confirmed and
   never auto-close it, keeping capacity orthogonal to status.
-- **Creator Dashboard and Consolidated Calendar** — the two remaining views (the
-  data and access rules they need are already in place).
+- **Notify interested users on changes.** Right now, editing a slot or activity
+  that people are interested in only *warns the owner* (the app has no
+  notifications). The natural next step is to actually notify the interested
+  users — e.g. email them when a slot they're in is rescheduled, or an activity
+  they joined is edited or cancelled — turning today's owner-side warning into a
+  real heads-up for the people affected.
 - More tests, especially around the visibility rules and concurrency.
 - Move `DEBUG` (and `ALLOWED_HOSTS`) into the `.env` too, and add the
   HTTPS-only cookie / HSTS settings for production. (`SECRET_KEY` already comes

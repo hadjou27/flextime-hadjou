@@ -45,7 +45,8 @@ h3 { font-size: 1.1rem; }
   margin-top: 0.75rem;
 }
 .activity-actions form { margin: 0; }
-.activity-actions button { margin: 0; padding: 0.3rem 0.9rem; font-size: 0.85rem; }
+.activity-actions button,
+.activity-actions a[role="button"] { margin: 0; padding: 0.3rem 0.9rem; font-size: 0.85rem; }
 
 /* A row of meta info (participants, etc.). */
 .meta { color: var(--pico-muted-color); font-size: 0.85rem; }

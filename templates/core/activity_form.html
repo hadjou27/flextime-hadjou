@@ -1,21 +1,30 @@
 {% extends "base.html" %}
 
-{% block title %}Propose an activity — FlexTime{% endblock %}
+{% block title %}{% if editing %}Edit activity{% else %}Propose an activity{% endif %} — FlexTime{% endblock %}
 
 {% block content %}
   <p><a href="{% url 'core:slot_detail' slot.id %}">← Back to the slot</a></p>
 
   <hgroup>
-    <h1>Propose an activity</h1>
+    <h1>{% if editing %}Edit activity{% else %}Propose an activity{% endif %}</h1>
     <p>For {{ slot.start|date:"l j F" }}, {{ slot.start|time:"H:i" }}–{{ slot.end|time:"H:i" }}.</p>
   </hgroup>
 
-  <form method="post" novalidate>
+  {% if interested_count %}
+    <article class="error">
+      ⚠️ {{ interested_count }} {{ interested_count|pluralize:"person has,people have" }}
+      already shown interest in this activity. Your changes will affect them, and
+      they won't be notified.
+    </article>
+  {% endif %}
+
+  <form method="post" novalidate{% if interested_count %} onsubmit="return confirm('{{ interested_count }} interested {{ interested_count|pluralize:'person,people' }} will be affected. Save changes anyway?');"{% endif %}>
     {% csrf_token %}
 
     <label>
       Category
       {{ form.category }}
+      {% if category_locked %}<small class="meta">Locked — the category can't change once the activity is confirmed.</small>{% endif %}
       {% for error in form.category.errors %}<small style="color:var(--pico-del-color)">{{ error }}</small>{% endfor %}
     </label>
 
@@ -30,7 +39,7 @@
       {{ form.description }}
     </label>
 
-    <button type="submit">Add activity</button>
+    <button type="submit">{% if editing %}Save changes{% else %}Add activity{% endif %}</button>
     <a href="{% url 'core:slot_detail' slot.id %}" role="button" class="secondary outline">Cancel</a>
   </form>
 {% endblock %}

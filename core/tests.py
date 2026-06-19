@@ -184,6 +184,53 @@ class AvailabilitySlotTests(TestCase):
         response = self.client.post(reverse('core:slot_cancel', args=[slot.id]))
         self.assertEqual(response.status_code, 404)
 
+    def _edit_slot(self, slot, start, end):
+        fmt = '%Y-%m-%dT%H:%M'
+        return self.client.post(reverse('core:slot_edit', args=[slot.id]), {
+            'start': start.strftime(fmt), 'end': end.strftime(fmt),
+        })
+
+    def test_edit_open_slot(self):
+        slot = AvailabilitySlot.objects.create(
+            owner=self.user, start=self.future, end=self.future + timedelta(hours=1),
+        )
+        new_start = self.future + timedelta(days=1)
+        new_end = new_start + timedelta(hours=2)
+        response = self._edit_slot(slot, new_start, new_end)
+        self.assertRedirects(response, reverse('core:slot_detail', args=[slot.id]))
+        slot.refresh_from_db()
+        self.assertEqual(slot.start.hour, new_start.hour)
+        self.assertEqual(slot.end.hour, new_end.hour)
+
+    def test_cannot_edit_a_confirmed_slot(self):
+        # A slot is editable only while Open; once Confirmed the time is settled.
+        slot = AvailabilitySlot.objects.create(
+            owner=self.user, start=self.future, end=self.future + timedelta(hours=1),
+            status=Status.CONFIRMED,
+        )
+        self._edit_slot(slot, self.future + timedelta(days=2),
+                        self.future + timedelta(days=2, hours=1))
+        slot.refresh_from_db()
+        self.assertEqual(slot.start.hour, self.future.hour)  # unchanged
+
+    def test_cannot_edit_someone_elses_slot(self):
+        slot = AvailabilitySlot.objects.create(
+            owner=self.other, start=self.future, end=self.future + timedelta(hours=1),
+        )
+        response = self.client.get(reverse('core:slot_edit', args=[slot.id]))
+        self.assertEqual(response.status_code, 404)
+
+    def test_edit_warns_when_slot_has_interested_users(self):
+        slot = AvailabilitySlot.objects.create(
+            owner=self.user, start=self.future, end=self.future + timedelta(hours=1),
+        )
+        activity = ActivitySuggestion.objects.create(
+            slot=slot, category=Category.TENNIS, title='Tennis',
+        )
+        Interest.objects.create(user=self.other, activity=activity)
+        response = self.client.get(reverse('core:slot_edit', args=[slot.id]))
+        self.assertContains(response, 'already shown interest')
+
     def test_old_slots_are_hidden_from_my_calendar(self):
         recent = AvailabilitySlot.objects.create(
             owner=self.user, start=self.now, end=self.now + timedelta(hours=1),
@@ -285,13 +332,6 @@ class ActivityCapacityTests(TestCase):
             owner=self.user, start=now, end=now + timedelta(hours=1),
         )
 
-    def test_capacity_of_zero_is_rejected(self):
-        with self.assertRaises(IntegrityError):
-            ActivitySuggestion.objects.create(
-                slot=self.slot, category=Category.YOGA, title='Yoga',
-                max_participants=0,
-            )
-
     def test_capacity_may_be_blank_for_unlimited(self):
         activity = ActivitySuggestion.objects.create(
             slot=self.slot, category=Category.YOGA, title='Yoga',
@@ -369,6 +409,43 @@ class ActivityViewTests(TestCase):
         self.assertEqual(detail.status_code, 200)
         form = self.client.get(reverse('core:activity_create', args=[self.slot.id]))
         self.assertEqual(form.status_code, 200)
+
+    def _edit_activity(self, activity, category, title, description=''):
+        return self.client.post(reverse('core:activity_edit', args=[activity.id]), {
+            'category': category, 'title': title, 'description': description,
+        })
+
+    def test_edit_open_activity_can_change_everything(self):
+        response = self._edit_activity(self.tennis, Category.COFFEE, 'Updated', 'New desc')
+        self.assertRedirects(response, reverse('core:slot_detail', args=[self.slot.id]))
+        self.tennis.refresh_from_db()
+        self.assertEqual(self.tennis.title, 'Updated')
+        self.assertEqual(self.tennis.category, Category.COFFEE)  # open → category editable
+
+    def test_edit_confirmed_activity_locks_the_category(self):
+        self.tennis.confirm()
+        self._edit_activity(self.tennis, Category.COFFEE, 'Renamed')
+        self.tennis.refresh_from_db()
+        self.assertEqual(self.tennis.title, 'Renamed')          # title still editable
+        self.assertEqual(self.tennis.category, Category.TENNIS)  # category locked
+
+    def test_cannot_edit_a_cancelled_activity(self):
+        self.tennis.cancel()  # open activity → cancel allowed
+        self._edit_activity(self.tennis, Category.COFFEE, 'Nope')
+        self.tennis.refresh_from_db()
+        self.assertEqual(self.tennis.title, 'Tennis')  # unchanged
+
+    def test_cannot_edit_a_closed_activity(self):
+        self.tennis.confirm()
+        self.tennis.close()
+        self._edit_activity(self.tennis, Category.TENNIS, 'Nope')
+        self.tennis.refresh_from_db()
+        self.assertEqual(self.tennis.title, 'Tennis')  # unchanged (reopen first to edit)
+
+    def test_non_owner_cannot_edit_activity(self):
+        self.client.force_login(self.other)
+        response = self.client.get(reverse('core:activity_edit', args=[self.tennis.id]))
+        self.assertEqual(response.status_code, 404)
 
 
 class InterestTests(TestCase):

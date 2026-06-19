@@ -21,12 +21,16 @@
           <div class="cal-daynum">{{ cell.date.day }}</div>
           {% for row in cell.rows %}
             {% if row.is_own %}
-              <a class="cal-slot s-{{ row.slot.status }}" href="{% url 'core:slot_detail' row.slot.id %}">
-                {{ row.slot.start|time:"H:i" }} · You
+              <a class="cal-slot s-{{ row.slot.status }}"
+                 href="{% url 'core:slot_detail' row.slot.id %}"
+                 title="{{ row.slot.start|time:'H:i' }}–{{ row.slot.end|time:'H:i' }} · You · {{ row.slot.get_status_display }}">
+                {{ row.slot.start|time:"H:i" }}–{{ row.slot.end|time:"H:i" }} · You
               </a>
             {% else %}
-              <a class="cal-slot s-{{ row.slot.status }}" href="{% url 'core:shared_calendar' row.owner.share_slug %}">
-                {{ row.slot.start|time:"H:i" }} · {{ row.owner.first_name }}
+              <a class="cal-slot s-{{ row.slot.status }}"
+                 href="{% url 'core:shared_calendar' row.owner.share_slug %}"
+                 title="{{ row.slot.start|time:'H:i' }}–{{ row.slot.end|time:'H:i' }} · {{ row.owner.get_full_name }} · {{ row.slot.get_status_display }}">
+                {{ row.slot.start|time:"H:i" }}–{{ row.slot.end|time:"H:i" }} · {{ row.owner.first_name }}
               </a>
             {% endif %}
           {% endfor %}

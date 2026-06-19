@@ -69,21 +69,19 @@
   {% endif %}
 
   {% if archived %}
-    <details>
-      <summary>Archived calendars ({{ archived|length }})</summary>
-      <ul class="people">
-        {% for access in archived %}
-          <li class="person">
-            <span class="avatar">{{ access.creator.first_name|first }}{{ access.creator.last_name|first }}</span>
-            <span class="person-name">{{ access.creator.get_full_name }}</span>
-            <form action="{% url 'core:unarchive_calendar' access.creator.share_slug %}" method="post">
-              {% csrf_token %}
-              <button type="submit" class="secondary outline btn-sm">Restore</button>
-            </form>
-          </li>
-        {% endfor %}
-      </ul>
-    </details>
+    <h2>Archived calendars</h2>
+    <ul class="people">
+      {% for access in archived %}
+        <li class="person">
+          <span class="avatar">{{ access.creator.first_name|first }}{{ access.creator.last_name|first }}</span>
+          <span class="person-name">{{ access.creator.get_full_name }}</span>
+          <form action="{% url 'core:unarchive_calendar' access.creator.share_slug %}" method="post">
+            {% csrf_token %}
+            <button type="submit" class="secondary outline btn-sm">Restore</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
   {% endif %}
 
   <h2>Your visitors</h2>

@@ -13,6 +13,10 @@
     <p>{{ slot.start|time:"H:i" }} – {{ slot.end|time:"H:i" }}</p>
   </hgroup>
 
+  {% if slot.status == 'open' %}
+    <p><a href="{% url 'core:slot_edit' slot.id %}" role="button" class="outline btn-sm">Edit slot</a></p>
+  {% endif %}
+
   <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem">
     <h2 style="margin:0">Activities</h2>
     {% if slot.status == 'open' %}
@@ -36,6 +40,9 @@
 
       {% if slot.status != 'cancelled' %}
         <div class="activity-actions">
+          {% if activity.status == 'open' or activity.status == 'confirmed' %}
+            <a href="{% url 'core:activity_edit' activity.id %}" role="button" class="outline">Edit</a>
+          {% endif %}
           {% if activity.status == 'open' %}
             <form action="{% url 'core:activity_confirm' activity.id %}" method="post">
               {% csrf_token %}<button type="submit">Confirm</button>
