@@ -422,12 +422,24 @@ class ActivityViewTests(TestCase):
         self.assertEqual(self.tennis.title, 'Updated')
         self.assertEqual(self.tennis.category, Category.COFFEE)  # open → category editable
 
-    def test_edit_confirmed_activity_locks_the_category(self):
+    def test_cannot_edit_a_confirmed_activity(self):
+        """Once confirmed the whole activity is locked — no field may change.
+
+        Previously only the category was locked; now the entire content is
+        frozen because participants joined based on all three fields and there
+        is no notification system to alert them of any change.
+        """
         self.tennis.confirm()
         self._edit_activity(self.tennis, Category.COFFEE, 'Renamed')
         self.tennis.refresh_from_db()
-        self.assertEqual(self.tennis.title, 'Renamed')          # title still editable
-        self.assertEqual(self.tennis.category, Category.TENNIS)  # category locked
+        self.assertEqual(self.tennis.title, 'Tennis')           # title unchanged
+        self.assertEqual(self.tennis.category, Category.TENNIS)  # category unchanged
+
+    def test_edit_confirmed_activity_redirects_with_error(self):
+        """GET on the edit URL of a confirmed activity redirects immediately."""
+        self.tennis.confirm()
+        response = self.client.get(reverse('core:activity_edit', args=[self.tennis.id]))
+        self.assertRedirects(response, reverse('core:slot_detail', args=[self.slot.id]))
 
     def test_cannot_edit_a_cancelled_activity(self):
         self.tennis.cancel()  # open activity → cancel allowed

@@ -336,22 +336,25 @@ def _owner_activity(request, activity_id):
 
 @login_required
 def activity_edit(request, activity_id):
-    """Edit one of the owner's activities. Allowed while it's still Open or
-    Confirmed — once it's Closed or Cancelled the content is settled.
+    """Edit one of the owner's activities. Allowed only while it's still Open.
 
-    Once Confirmed, the category is locked: it's the chosen activity and people
-    have joined it *for that category*, so only the title/description stay
-    editable. A disabled field also ignores any value smuggled in via POST.
+    Once Confirmed, the content is settled: people expressed interest based on
+    the category, title, and description they saw. Since there is no notification
+    system, any change would be invisible to participants — so the whole activity
+    is locked. To make changes, the owner must cancel the slot and start over.
+
+    Closed and Cancelled activities are also locked (terminal states).
     """
     activity = _owner_activity(request, activity_id)
-    if activity.status in (Status.CLOSED, Status.CANCELLED):
-        messages.error(request, 'You can only edit an activity while it is open or confirmed.')
+    if activity.status != Status.OPEN:
+        messages.error(
+            request,
+            'This activity can no longer be edited. '
+            'Once confirmed, the content is locked to protect participants who joined.'
+        )
         return redirect('core:slot_detail', slot_id=activity.slot_id)
 
-    category_locked = activity.status == Status.CONFIRMED
     form = ActivitySuggestionForm(request.POST or None, instance=activity)
-    if category_locked:
-        form.fields['category'].disabled = True
 
     if request.method == 'POST' and form.is_valid():
         form.save()
@@ -361,7 +364,7 @@ def activity_edit(request, activity_id):
     # People already interested signed up for this content — warn before editing.
     return render(request, 'core/activity_form.html', {
         'form': form, 'editing': True, 'slot': activity.slot,
-        'category_locked': category_locked,
+        'category_locked': False,
         'interested_count': activity.interests.count(),
     })
 

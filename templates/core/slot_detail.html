@@ -40,29 +40,112 @@
 
       {% if slot.status != 'cancelled' %}
         <div class="activity-actions">
-          {% if activity.status == 'open' or activity.status == 'confirmed' %}
+
+          {# Edit: only on OPEN activities — confirmed/closed/cancelled are locked #}
+          {% if activity.status == 'open' %}
             <a href="{% url 'core:activity_edit' activity.id %}" role="button" class="outline">Edit</a>
           {% endif %}
+
           {% if activity.status == 'open' %}
-            <form action="{% url 'core:activity_confirm' activity.id %}" method="post">
-              {% csrf_token %}<button type="submit">Confirm</button>
-            </form>
+            {# The Confirm button triggers the warning popup (no direct submission) #}
+            <button type="button"
+                    class="confirm-trigger"
+                    data-confirm-url="{% url 'core:activity_confirm' activity.id %}"
+                    data-activity-title="{{ activity.title }}"
+                    data-interested="{{ activity.interests.count }}">
+              Confirm
+            </button>
             <form action="{% url 'core:activity_cancel' activity.id %}" method="post">
               {% csrf_token %}<button type="submit" class="secondary outline">Cancel</button>
             </form>
+
           {% elif activity.status == 'confirmed' %}
             <form action="{% url 'core:activity_close' activity.id %}" method="post">
               {% csrf_token %}<button type="submit">Close to newcomers</button>
             </form>
+
           {% elif activity.status == 'closed' %}
             <form action="{% url 'core:activity_reopen' activity.id %}" method="post">
               {% csrf_token %}<button type="submit" class="secondary">Reopen</button>
             </form>
           {% endif %}
+
         </div>
       {% endif %}
     </article>
   {% empty %}
     <p>No activities yet. Propose one so your friends know what you'd like to do.</p>
   {% endfor %}
+{% endblock %}
+
+{# ── Confirmation popup before confirming an activity ───────────────────── #}
+{% block extra_body %}
+<dialog id="confirm-modal">
+  <article>
+    <header>
+      <h3>⚠️ Confirm this activity?</h3>
+    </header>
+
+    <p id="modal-body"></p>
+
+    <ul style="margin:.5rem 0 1rem 1.2rem">
+      <li>All other activities in this slot will be <strong>cancelled</strong>.</li>
+      <li>The content (category, title, description) will be <strong>permanently locked</strong>.</li>
+      <li>Participants who joined will <strong>not be notified</strong> of any future change.</li>
+    </ul>
+
+    <p><em>To make changes after confirmation, you will need to cancel the entire slot.</em></p>
+
+    <footer style="display:flex; gap:.5rem; justify-content:flex-end">
+      <button id="modal-cancel" class="secondary outline"
+              style="width:auto; margin:0">Go back</button>
+      <form id="confirm-form" method="post" style="margin:0">
+        {% csrf_token %}
+        <button type="submit" style="width:auto; margin:0">Yes, confirm</button>
+      </form>
+    </footer>
+  </article>
+</dialog>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var modal   = document.getElementById('confirm-modal');
+    var body    = document.getElementById('modal-body');
+    var form    = document.getElementById('confirm-form');
+    var btnBack = document.getElementById('modal-cancel');
+
+    // Open the popup on click of a "Confirm" button
+    document.querySelectorAll('.confirm-trigger').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var title      = btn.dataset.activityTitle;
+        var interested = parseInt(btn.dataset.interested, 10);
+        var confirmUrl = btn.dataset.confirmUrl;
+
+        // Dynamic message based on the number of participants already interested
+        if (interested > 0) {
+          body.innerHTML =
+            'You are about to confirm <strong>' + title + '</strong>. ' +
+            '<strong>' + interested + ' participant' +
+            (interested > 1 ? 's have' : ' has') +
+            ' already expressed interest</strong> and are counting on this content.';
+        } else {
+          body.innerHTML =
+            'You are about to confirm <strong>' + title + '</strong>.';
+        }
+
+        // Point the form to the correct confirmation URL
+        form.action = confirmUrl;
+        modal.showModal();
+      });
+    });
+
+    // Close without submitting
+    btnBack.addEventListener('click', function () { modal.close(); });
+
+    // Close when clicking on the backdrop
+    modal.addEventListener('click', function (e) {
+      if (e.target === modal) { modal.close(); }
+    });
+  });
+</script>
 {% endblock %}

@@ -372,34 +372,38 @@ Calls I made where the brief didn't say:
      not data-integrity invariants, so they don't need a database constraint.
 9. **When editing (Update) is allowed — and what stays locked.** The brief lists
    `Update` for slots and activities but doesn't say *when* it's permitted, so I
-   tied it to the state machine, on one principle: **never let an edit betray
-   people who are already counting on something, and never edit a settled state.**
+   tied it to the state machine on one core principle: **an edit must never
+   silently betray people who are already counting on the content they signed up
+   for — especially with no notification system in place.**
    - **A slot's time is editable only while it's Open.** Once an activity is
      Confirmed, friends have positioned themselves on that time — silently moving
      it would mislead them. Closed/Cancelled are settled, so no edit either. To
-     reschedule a confirmed slot, you cancel it and make a new one.
-   - **An activity is editable while Open or Confirmed, but not once Closed or
-     Cancelled.** A closed activity is sealed and people joined it as-is; a
-     cancelled one won't happen. To edit a closed one, the owner uses the
-     existing **Reopen** transition first (Closed → Confirmed), which is the
-     explicit "un-seal" step — then edits.
-   - **A Confirmed activity's category is locked.** Title and description stay
-     editable (fixing a typo, adding details), but the *category* is the essence
-     of "what we're doing" — people expressed interest **for that category**, so
-     turning a confirmed "Tennis" into "Cinema" would be a bait-and-switch. I
-     enforce it by disabling the form field (Django then also ignores any value
-     smuggled in via POST, so it's a real guard, not just a UI hint).
-   - **Two honest limits, both softened by a warning.** (1) On a Confirmed
-     activity the title/description stay editable while only the category is
-     locked — the intent is *refinement* (e.g. adding "bring your racket"), not
-     *redefinition*, though nothing technically stops a misleading rename;
-     locking the category (the structural "what") covers the main bait-and-switch
-     risk. (2) People can express interest as soon as an activity is Open, so
-     editing a slot's time *or* an activity's content can affect those already
-     interested — the same concern that locks a *confirmed* slot. Since the app
-     has no notifications, I don't block these edits, but **both the slot- and
-     activity-edit forms warn the owner** ("N people have already shown
-     interest…") and ask for confirmation before saving.
+     reschedule a confirmed slot, the owner cancels it and creates a new one.
+   - **An activity is editable only while it's Open.** Once Confirmed, the
+     full content (category, title, description) is locked — because people
+     expressed interest based on *all three fields*, and since the app has no
+     notification system, any silent change would be invisible to them. Closed
+     and Cancelled activities are also locked. To edit a Closed activity, the
+     owner uses the **Reopen** transition first (Closed → Confirmed) — but
+     Confirmed is itself locked, so the only real path to free editing is
+     cancelling the slot and starting fresh.
+   - **Why lock everything on Confirmed, not just the category?** An earlier
+     version locked only the category field, letting the owner still update
+     title and description. That turned out to be inconsistent: if the category
+     is protected because "people joined for it", the same reasoning applies to
+     the title and description they saw before clicking "I'm in". The only
+     coherent choices are all-or-nothing; with no notifications, locking
+     everything is the safer call.
+   - **Confirmation popup before confirming an activity.** Because confirming is
+     irreversible from a content perspective (the activity becomes un-editable
+     and all siblings are cancelled), the "Confirm" button on the slot detail
+     page opens a `<dialog>` modal that lists the consequences: siblings will
+     be cancelled, the content will be locked, and participants will not be
+     notified of any future change. The owner must click "Yes, confirm" to
+     proceed. This makes the point of no return explicit, not silent.
+   - **Open slots still warn when interested users are present.** Editing a
+     slot's time when someone is already interested is allowed but surfaced
+     with a warning ("N people have already shown interest…").
 
 ---
 
@@ -464,12 +468,12 @@ Calls I made where the brief didn't say:
   detail. Slots stay in chronological order within each day.
 - All four brief views are in place (My Calendar, Other Calendars, Creator
   Dashboard, Consolidated Calendar).
-- Tests across the whole app (76): the two sign-in/sign-up flows (including the
+- Tests across the whole app (77): the two sign-in/sign-up flows (including the
   disposable-email block), the magic-link rate limit (per email and per IP),
   calendar access, slots, activities, editing (Update) with its state-machine
-  rules and the confirmed-category lock, the state machine, interest (including
-  that blocking guards the join path, not just the display), visibility,
-  dashboard privacy, and the consolidated view.
+  rules and the full confirmed-activity lock, the state machine, interest
+  (including that blocking guards the join path, not just the display),
+  visibility, dashboard privacy, and the consolidated view.
   - **Mostly integration tests**: they drive real requests through Django's test
     client (URL → view → form → ORM → rendered HTML) — e.g. posting the sign-in
     form and following the emailed link, expressing interest and checking both
